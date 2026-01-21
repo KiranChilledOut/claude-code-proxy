@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Request, Header, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from datetime import datetime
 import uuid
-from typing import Optional
+import json
+import os
+from typing import Optional, List
 
 from src.core.config import config
 from src.core.logging import logger
@@ -211,6 +213,152 @@ async def test_connection():
         )
 
 
+def rotate_log_file(log_file_path: str, max_size_mb: int = 10):
+    """Rotate log file if it exceeds max_size_mb"""
+    try:
+        if os.path.exists(log_file_path):
+            file_size = os.path.getsize(log_file_path)
+            max_size_bytes = max_size_mb * 1024 * 1024
+
+            if file_size > max_size_bytes:
+                # Create backup
+                backup_path = f"{log_file_path}.bak"
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
+                os.rename(log_file_path, backup_path)
+                logger.info(f"Rotated log file: {log_file_path} -> {backup_path}")
+    except Exception as e:
+        logger.error(f"Error rotating log file: {e}")
+
+
+async def parse_flexible_events(request: Request):
+    """
+    Parse events from request body in flexible formats:
+    - JSON array: [{"event": "data"}, ...]
+    - Single object: {"event": "data"}
+    - Invalid JSON wrapped in array context
+    """
+    try:
+        # Get raw body and try to parse
+        body = await request.body()
+
+        if not body:
+            return []
+
+        # Try to parse as JSON
+        try:
+            data = json.loads(body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received: {e}")
+            # Try to fix common JSON issues and parse again
+            text = body.decode('utf-8')
+
+            # Try to fix unquoted property names (common issue)
+            import re
+            # Replace unquoted property names with quoted ones
+            fixed_text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+
+            try:
+                data = json.loads(fixed_text)
+                logger.info("Successfully parsed JSON after fixing unquoted properties")
+            except json.JSONDecodeError:
+                logger.error("Could not parse JSON even after attempted fixes")
+                return []
+
+        # Handle different input formats
+        if isinstance(data, list):
+            # Already an array - use as-is
+            return data
+        elif isinstance(data, dict):
+            # Single object - wrap in array
+            return [data]
+        else:
+            # Other types (string, number, etc.) - wrap in array as event
+            return [{"raw_data": data}]
+
+    except Exception as e:
+        logger.error(f"Error parsing request body: {e}")
+        return []
+
+
+@router.post("/api/event_logging/batch")
+async def event_logging_batch(request: Request, _: None = Depends(validate_api_key)):
+    """
+    Flexible event logging endpoint that appends JSON lines to Claude-proxy.log
+    Accepts various input formats:
+    - JSON array: [{"event_type": "...", "data": {...}}, ...]
+    - Single object: {"event_type": "...", "data": {...}}
+    - Invalid JSON with unquoted properties (auto-fixed)
+
+    Includes request timestamp and client IP
+    Implements log rotation at 10MB
+    """
+    try:
+        # Get client IP
+        client_ip = request.client.host if request.client else "unknown"
+
+        # Get current timestamp
+        timestamp = datetime.now().isoformat()
+
+        # Parse events with flexible format handling
+        events = await parse_flexible_events(request)
+
+        # If no events could be parsed, still return 200 but with 0 events
+        if not events:
+            logger.warning(f"No events could be parsed from request from {client_ip}")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "No valid events found in request",
+                    "timestamp": timestamp,
+                    "events_logged": 0,
+                    "note": "Request body may be malformed"
+                }
+            )
+
+        # Define log file path
+        log_file_path = "Claude-proxy.log"
+
+        # Rotate log file if needed
+        rotate_log_file(log_file_path, max_size_mb=10)
+
+        # Append each event as JSON line with timestamp and client IP
+        with open(log_file_path, "a", encoding="utf-8") as f:
+            for event in events:
+                log_entry = {
+                    "timestamp": timestamp,
+                    "client_ip": client_ip,
+                    "event": event
+                }
+                # Write as JSON line
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+        logger.info(f"Processed batch of {len(events)} events from {client_ip}")
+
+        # Return 200 OK
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": f"Processed {len(events)} events",
+                "timestamp": timestamp,
+                "events_logged": len(events)
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error in event logging: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
+
 @router.get("/")
 async def root():
     """Root endpoint"""
@@ -230,5 +378,6 @@ async def root():
             "count_tokens": "/v1/messages/count_tokens",
             "health": "/health",
             "test_connection": "/test-connection",
+            "event_logging_batch": "/api/event_logging/batch",
         },
     }

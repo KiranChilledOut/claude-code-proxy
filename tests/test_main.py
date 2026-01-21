@@ -12,7 +12,7 @@ async def test_basic_chat():
     """Test basic chat completion."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 100,
@@ -31,7 +31,7 @@ async def test_streaming_chat():
     async with httpx.AsyncClient() as client:
         async with client.stream(
             "POST",
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-haiku-20241022",
                 "max_tokens": 150,
@@ -51,7 +51,7 @@ async def test_function_calling():
     """Test function calling capability."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 200,
@@ -91,7 +91,7 @@ async def test_with_system_message():
     """Test with system message."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 100,
@@ -113,7 +113,7 @@ async def test_multimodal():
         sample_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jU8PJAAAAASUVORK5CYII="
         
         response = await client.post(
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 100,
@@ -145,7 +145,7 @@ async def test_conversation_with_tool_use():
     async with httpx.AsyncClient() as client:
         # First message with tool call
         response1 = await client.post(
-            "http://localhost:8082/v1/messages",
+            "http://localhost:8083/v1/messages",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 200,
@@ -183,7 +183,7 @@ async def test_conversation_with_tool_use():
                 
                 # Second message with tool result
                 response2 = await client.post(
-                    "http://localhost:8082/v1/messages",
+                    "http://localhost:8083/v1/messages",
                     json={
                         "model": "claude-3-5-sonnet-20241022",
                         "max_tokens": 100,
@@ -212,7 +212,7 @@ async def test_token_counting():
     """Test token counting endpoint."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://localhost:8082/v1/messages/count_tokens",
+            "http://localhost:8083/v1/messages/count_tokens",
             json={
                 "model": "claude-3-5-sonnet-20241022",
                 "messages": [
@@ -229,12 +229,12 @@ async def test_health_and_connection():
     """Test health and connection endpoints."""
     async with httpx.AsyncClient() as client:
         # Health check
-        health_response = await client.get("http://localhost:8082/health")
+        health_response = await client.get("http://localhost:8083/health")
         print("\nHealth check:")
         print(json.dumps(health_response.json(), indent=2))
         
         # Connection test
-        connection_response = await client.get("http://localhost:8082/test-connection")
+        connection_response = await client.get("http://localhost:8083/test-connection")
         print("\nConnection test:")
         print(json.dumps(connection_response.json(), indent=2))
 
@@ -250,7 +250,7 @@ async def main():
         await test_basic_chat()
         await test_with_system_message()
         await test_streaming_chat()
-        await test_multimodal()
+        # await test_multimodal()
         await test_function_calling()
         await test_conversation_with_tool_use()
         

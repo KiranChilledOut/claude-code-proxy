@@ -125,7 +125,7 @@ export OPENAI_API_KEY="your-api-key-here"
 # Optional environment variables
 export ANTHROPIC_API_KEY="anthropic-key"
 export HOST="0.0.0.0"
-export PORT="8082"
+export PORT="8083"
 export LOG_LEVEL="INFO"
 ```
 
@@ -165,7 +165,7 @@ cat > /opt/claude-proxy/.env << EOF
 OPENAI_API_KEY=sk-your-actual-key
 ANTHROPIC_API_KEY=your-anthropic-key
 HOST=0.0.0.0
-PORT=8082
+PORT=8083
 LOG_LEVEL=WARNING
 EOF
 
@@ -200,7 +200,7 @@ systemctl enable claude-proxy
 FROM alpine:latest
 RUN apk add --no-cache libstdc++
 COPY claude-code-proxy-single /usr/local/bin/claude-code-proxy
-EXPOSE 8082
+EXPOSE 8083
 CMD ["claude-code-proxy"]
 ```
 
@@ -231,7 +231,7 @@ CMD ["claude-code-proxy"]
 
    ```bash
    # Find process using port
-   lsof -i :8082
+   lsof -i :8083
    # Or use different port
    PORT=8083 ./claude-code-proxy
    ```

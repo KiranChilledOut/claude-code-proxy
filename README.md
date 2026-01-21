@@ -52,10 +52,10 @@ docker compose up -d
 
 ```bash
 # If ANTHROPIC_API_KEY is not set in the proxy:
-ANTHROPIC_BASE_URL=http://localhost:8082 ANTHROPIC_API_KEY="any-value" claude
+ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY="any-value" claude
 
 # If ANTHROPIC_API_KEY is set in the proxy:
-ANTHROPIC_BASE_URL=http://localhost:8082 ANTHROPIC_API_KEY="exact-matching-key" claude
+ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY="exact-matching-key" claude
 ```
 
 ## Configuration
@@ -87,7 +87,7 @@ The application automatically loads environment variables from a `.env` file in 
 **Server Settings:**
 
 - `HOST` - Server host (default: `0.0.0.0`)
-- `PORT` - Server port (default: `8082`)
+- `PORT` - Server port (default: `8083`)
 - `LOG_LEVEL` - Logging level (default: `WARNING`)
 
 **Performance:**
@@ -158,11 +158,11 @@ The proxy will automatically include these headers in all API requests to the ta
 
 The proxy maps Claude model requests to your configured models:
 
-| Claude Request                 | Mapped To     | Environment Variable   |
-| ------------------------------ | ------------- | ---------------------- |
-| Models with "haiku"            | `SMALL_MODEL` | Default: `gpt-4o-mini` |
-| Models with "sonnet"           | `MIDDLE_MODEL`| Default: `BIG_MODEL`   |
-| Models with "opus"             | `BIG_MODEL`   | Default: `gpt-4o`      |
+| Claude Request       | Mapped To      | Environment Variable   |
+| -------------------- | -------------- | ---------------------- |
+| Models with "haiku"  | `SMALL_MODEL`  | Default: `gpt-4o-mini` |
+| Models with "sonnet" | `MIDDLE_MODEL` | Default: `BIG_MODEL`   |
+| Models with "opus"   | `BIG_MODEL`    | Default: `gpt-4o`      |
 
 ### Provider Examples
 
@@ -208,7 +208,7 @@ Any OpenAI-compatible API can be used by setting the appropriate `OPENAI_BASE_UR
 import httpx
 
 response = httpx.post(
-    "http://localhost:8082/v1/messages",
+    "http://localhost:8083/v1/messages",
     json={
         "model": "claude-3-5-sonnet-20241022",  # Maps to MIDDLE_MODEL
         "max_tokens": 100,
@@ -228,10 +228,10 @@ This proxy is designed to work seamlessly with Claude Code CLI:
 python start_proxy.py
 
 # Use Claude Code with the proxy
-ANTHROPIC_BASE_URL=http://localhost:8082 claude
+ANTHROPIC_BASE_URL=http://localhost:8083 claude
 
 # Or set permanently
-export ANTHROPIC_BASE_URL=http://localhost:8082
+export ANTHROPIC_BASE_URL=http://localhost:8083
 claude
 ```
 

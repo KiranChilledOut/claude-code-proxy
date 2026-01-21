@@ -18,7 +18,7 @@ async def test_non_streaming_cancellation():
             # Start a long-running request
             task = asyncio.create_task(
                 client.post(
-                    "http://localhost:8082/v1/messages",
+                    "http://localhost:8083/v1/messages",
                     json={
                         "model": "claude-3-5-sonnet-20241022",
                         "max_tokens": 1000,
@@ -51,7 +51,7 @@ async def test_streaming_cancellation():
             # Start streaming request
             async with client.stream(
                 "POST",
-                "http://localhost:8082/v1/messages",
+                "http://localhost:8083/v1/messages",
                 json={
                     "model": "claude-3-5-sonnet-20241022",
                     "max_tokens": 1000,
@@ -89,7 +89,7 @@ async def test_server_running():
     
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.get("http://localhost:8082/health")
+            response = await client.get("http://localhost:8083/health")
             if response.status_code == 200:
                 print("✅ Server is running and healthy")
                 return True

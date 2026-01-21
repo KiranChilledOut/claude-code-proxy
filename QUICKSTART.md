@@ -51,15 +51,15 @@ cp .env.example .env
 python start_proxy.py
 
 # In another terminal, use with Claude Code
-ANTHROPIC_BASE_URL=http://localhost:8082 claude
+ANTHROPIC_BASE_URL=http://localhost:8083 claude
 ```
 
 ## 🎯 How It Works
 
-| Your Input | Proxy Action | Result |
-|-----------|--------------|--------|
-| Claude Code sends `claude-3-5-sonnet-20241022` | Maps to your `BIG_MODEL` | Uses `gpt-4o` (or whatever you configured) |
-| Claude Code sends `claude-3-5-haiku-20241022` | Maps to your `SMALL_MODEL` | Uses `gpt-4o-mini` (or whatever you configured) |
+| Your Input                                     | Proxy Action               | Result                                          |
+| ---------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| Claude Code sends `claude-3-5-sonnet-20241022` | Maps to your `BIG_MODEL`   | Uses `gpt-4o` (or whatever you configured)      |
+| Claude Code sends `claude-3-5-haiku-20241022`  | Maps to your `SMALL_MODEL` | Uses `gpt-4o-mini` (or whatever you configured) |
 
 ## 📋 What You Need
 
@@ -69,7 +69,7 @@ ANTHROPIC_BASE_URL=http://localhost:8082 claude
 - 2 minutes to configure
 
 ## 🔧 Default Settings
-- Server runs on `http://localhost:8082`
+- Server runs on `http://localhost:8083`
 - Maps haiku → SMALL_MODEL, sonnet/opus → BIG_MODEL
 - Supports streaming, function calling, images
 
