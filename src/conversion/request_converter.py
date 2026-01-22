@@ -13,15 +13,21 @@ def convert_claude_to_openai(
     claude_request: ClaudeMessagesRequest, model_manager
 ) -> Dict[str, Any]:
     """Convert Claude API request format to OpenAI format."""
+    allow_tools = not config.disable_tools
+    # Only treat the latest user message as image-bearing for routing/tool decisions
+    has_image = bool(model_manager and model_manager.contains_image_content(
+        claude_request.messages, latest_user_only=True
+    ))
 
     # Map model
-    openai_model = model_manager.map_claude_model_to_openai(claude_request.model)
+    openai_model = model_manager.map_claude_model_to_openai(claude_request.model, claude_request.messages)
+    logger.info(f"Selected model: {openai_model} for request with {len(claude_request.messages)} messages")
 
     # Convert messages
     openai_messages = []
 
     # Add system message if present
-    if claude_request.system:
+    if claude_request.system and not (config.strip_image_context and has_image):
         system_text = ""
         if isinstance(claude_request.system, str):
             system_text = claude_request.system
@@ -48,14 +54,14 @@ def convert_claude_to_openai(
         msg = claude_request.messages[i]
 
         if msg.role == Constants.ROLE_USER:
-            openai_message = convert_claude_user_message(msg)
+            openai_message = convert_claude_user_message(msg, allow_images=has_image)
             openai_messages.append(openai_message)
         elif msg.role == Constants.ROLE_ASSISTANT:
-            openai_message = convert_claude_assistant_message(msg)
+            openai_message = convert_claude_assistant_message(msg, allow_tools=allow_tools)
             openai_messages.append(openai_message)
 
             # Check if next message contains tool results
-            if i + 1 < len(claude_request.messages):
+            if allow_tools and i + 1 < len(claude_request.messages):
                 next_msg = claude_request.messages[i + 1]
                 if (
                     next_msg.role == Constants.ROLE_USER
@@ -94,7 +100,7 @@ def convert_claude_to_openai(
         openai_request["top_p"] = claude_request.top_p
 
     # Convert tools
-    if claude_request.tools:
+    if allow_tools and claude_request.tools:
         openai_tools = []
         for tool in claude_request.tools:
             if tool.name and tool.name.strip():
@@ -111,8 +117,8 @@ def convert_claude_to_openai(
         if openai_tools:
             openai_request["tools"] = openai_tools
 
-    # Convert tool choice
-    if claude_request.tool_choice:
+    # Convert tool choice only when tools are present
+    if allow_tools and claude_request.tool_choice and openai_request.get("tools"):
         choice_type = claude_request.tool_choice.get("type")
         if choice_type == "auto":
             openai_request["tool_choice"] = "auto"
@@ -126,10 +132,15 @@ def convert_claude_to_openai(
         else:
             openai_request["tool_choice"] = "auto"
 
+    # Vision endpoints commonly reject tool use; force no tools for image requests
+    if has_image:
+        openai_request.pop("tools", None)
+        openai_request["tool_choice"] = "none"
+
     return openai_request
 
 
-def convert_claude_user_message(msg: ClaudeMessage) -> Dict[str, Any]:
+def convert_claude_user_message(msg: ClaudeMessage, *, allow_images: bool) -> Dict[str, Any]:
     """Convert Claude user message to OpenAI format."""
     if msg.content is None:
         return {"role": Constants.ROLE_USER, "content": ""}
@@ -139,10 +150,13 @@ def convert_claude_user_message(msg: ClaudeMessage) -> Dict[str, Any]:
 
     # Handle multimodal content
     openai_content = []
+    text_blocks = []
+    image_blocks = []
+    has_image = False
     for block in msg.content:
         if block.type == Constants.CONTENT_TEXT:
-            openai_content.append({"type": "text", "text": block.text})
-        elif block.type == Constants.CONTENT_IMAGE:
+            text_blocks.append(block.text)
+        elif block.type == Constants.CONTENT_IMAGE and allow_images:
             # Convert Claude image format to OpenAI format
             if (
                 isinstance(block.source, dict)
@@ -150,7 +164,8 @@ def convert_claude_user_message(msg: ClaudeMessage) -> Dict[str, Any]:
                 and "media_type" in block.source
                 and "data" in block.source
             ):
-                openai_content.append(
+                has_image = True
+                image_blocks.append(
                     {
                         "type": "image_url",
                         "image_url": {
@@ -159,13 +174,36 @@ def convert_claude_user_message(msg: ClaudeMessage) -> Dict[str, Any]:
                     }
                 )
 
+    if config.strip_image_context and has_image:
+        text_to_keep = ""
+        for text in reversed(text_blocks):
+            stripped = text.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("<system-reminder>"):
+                continue
+            if stripped.lower().startswith("[image:"):
+                continue
+            text_to_keep = text
+            break
+        if text_to_keep:
+            openai_content = [{"type": "text", "text": text_to_keep}] + image_blocks
+        else:
+            openai_content = image_blocks
+    else:
+        for text in text_blocks:
+            openai_content.append({"type": "text", "text": text})
+        openai_content.extend(image_blocks)
+
     if len(openai_content) == 1 and openai_content[0]["type"] == "text":
         return {"role": Constants.ROLE_USER, "content": openai_content[0]["text"]}
     else:
         return {"role": Constants.ROLE_USER, "content": openai_content}
 
 
-def convert_claude_assistant_message(msg: ClaudeMessage) -> Dict[str, Any]:
+def convert_claude_assistant_message(
+    msg: ClaudeMessage, *, allow_tools: bool
+) -> Dict[str, Any]:
     """Convert Claude assistant message to OpenAI format."""
     text_parts = []
     tool_calls = []
@@ -179,7 +217,7 @@ def convert_claude_assistant_message(msg: ClaudeMessage) -> Dict[str, Any]:
     for block in msg.content:
         if block.type == Constants.CONTENT_TEXT:
             text_parts.append(block.text)
-        elif block.type == Constants.CONTENT_TOOL_USE:
+        elif allow_tools and block.type == Constants.CONTENT_TOOL_USE:
             tool_calls.append(
                 {
                     "id": block.id,

@@ -29,6 +29,17 @@ class Config:
         self.big_model = os.environ.get("BIG_MODEL", "gpt-4o")
         self.middle_model = os.environ.get("MIDDLE_MODEL", self.big_model)
         self.small_model = os.environ.get("SMALL_MODEL", "gpt-4o-mini")
+        self.vision_model = os.environ.get("VISION_MODEL", self.big_model)
+        self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.strip_image_context = os.environ.get("STRIP_IMAGE_CONTEXT", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         
     def validate_api_key(self):
         """Basic API key validation"""

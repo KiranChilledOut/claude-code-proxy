@@ -1,10 +1,13 @@
 import asyncio
 import json
+import logging
 from fastapi import HTTPException
 from typing import Optional, AsyncGenerator, Dict, Any
 from openai import AsyncOpenAI, AsyncAzureOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai._exceptions import APIError, RateLimitError, AuthenticationError, BadRequestError
+
+logger = logging.getLogger(__name__)
 
 class OpenAIClient:
     """Async OpenAI client with cancellation support."""
@@ -84,12 +87,16 @@ class OpenAIClient:
             return completion.model_dump()
         
         except AuthenticationError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=401, detail=self.classify_openai_error(str(e)))
         except RateLimitError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=429, detail=self.classify_openai_error(str(e)))
         except BadRequestError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
         except APIError as e:
+            self._log_openai_error(e)
             status_code = getattr(e, 'status_code', 500)
             raise HTTPException(status_code=status_code, detail=self.classify_openai_error(str(e)))
         except Exception as e:
@@ -133,12 +140,16 @@ class OpenAIClient:
             yield "data: [DONE]"
                 
         except AuthenticationError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=401, detail=self.classify_openai_error(str(e)))
         except RateLimitError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=429, detail=self.classify_openai_error(str(e)))
         except BadRequestError as e:
+            self._log_openai_error(e)
             raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
         except APIError as e:
+            self._log_openai_error(e)
             status_code = getattr(e, 'status_code', 500)
             raise HTTPException(status_code=status_code, detail=self.classify_openai_error(str(e)))
         except Exception as e:
@@ -175,6 +186,17 @@ class OpenAIClient:
         
         # Default: return original message
         return str(error_detail)
+
+    def _log_openai_error(self, error: Exception) -> None:
+        response = getattr(error, "response", None)
+        if response is not None:
+            try:
+                logger.error("OpenAI API error response body: %s", response.text)
+            except Exception:
+                logger.error("OpenAI API error response body: <unreadable>")
+        body = getattr(error, "body", None)
+        if body:
+            logger.error("OpenAI API error body parsed: %s", body)
     
     def cancel_request(self, request_id: str) -> bool:
         """Cancel an active request by request_id."""
