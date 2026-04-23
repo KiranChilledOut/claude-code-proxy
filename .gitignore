@@ -174,5 +174,14 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
-n
-.claude/settings.local.json
+
+# Local Claude Code state
+.claude/
+.claude.json
+.claude.local/
+
+# Local MCP overrides
+.mcp.local.json
+
+# OS/editor noise
+.DS_Store
