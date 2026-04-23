@@ -5,16 +5,36 @@ from typing import Dict, Any, List, Tuple
 from src.core.constants import Constants
 from src.models.claude import ClaudeMessagesRequest, ClaudeMessage
 from src.core.config import config
+from src.conversion.computer_use import (
+    is_computer_use_tool,
+    convert_schema_less_tools,
+)
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Tiktoken-based token counting (Feature 4)
+# ---------------------------------------------------------------------------
+# We use cl100k_base as a reasonable cross-model approximation. It's the
+# encoding used by GPT-4 / GPT-3.5 and is close enough for context-window
+# guard-rails even when the actual backend model uses a different tokenizer.
+# If tiktoken fails to load (rare), we fall back to the old chars/4 heuristic.
+
+_tiktoken_encoding = None
+_tiktoken_available = False
+
+try:
+    import tiktoken
+    _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+    _tiktoken_available = True
+    logger.info("tiktoken loaded successfully — using cl100k_base for token estimation")
+except Exception as e:
+    logger.warning(f"tiktoken not available, falling back to char-based estimation: {e}")
 
 # Rough per-model context limits (tokens). Used to downscale max_tokens when
 # prompts get close to the window. Configurable via env overrides in config.
 # If no override is provided, we fall back to the safe default below.
 DEFAULT_CONTEXT_LIMIT = 128000
-# Bias multiplier to make the rough token estimate more conservative (actual
-# provider tokenization can be larger than chars/4). Increase to trim earlier.
-TOKEN_ESTIMATE_BIAS = 1.35
 # Extra safety buffer beyond the reserve passed to trimming.
 TOKEN_ESTIMATE_BUFFER = 512
 
@@ -34,30 +54,48 @@ def _get_context_limit(model_name: str) -> int:
     return DEFAULT_CONTEXT_LIMIT
 
 
+def _count_tokens_text(text: str) -> int:
+    """Count tokens in a string using tiktoken or fallback."""
+    if _tiktoken_available and _tiktoken_encoding is not None:
+        return len(_tiktoken_encoding.encode(text, disallowed_special=()))
+    # Fallback: chars / 4 with a conservative 1.35x bias
+    return int(math.ceil(len(text) / 4 * 1.35))
+
+
 def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
-    """Conservative token estimator: chars/4 + image bump, scaled up."""
-    total_chars = 0
+    """Estimate total prompt tokens using tiktoken (or char-based fallback).
+
+    Accounts for text content, image tokens, and tool call arguments.
+    Adds per-message overhead (role tokens, separators) consistent with
+    the OpenAI chat format.
+    """
+    total_tokens = 0
     image_bonus = 0
+    PER_MESSAGE_OVERHEAD = 4  # <|start|>role\n ... <|end|>
+
     for msg in messages:
+        total_tokens += PER_MESSAGE_OVERHEAD
         content = msg.get("content")
         if content is None:
-            continue
-        if isinstance(content, str):
-            total_chars += len(content)
+            pass
+        elif isinstance(content, str):
+            total_tokens += _count_tokens_text(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
-                        total_chars += len(block.get("text", ""))
+                        total_tokens += _count_tokens_text(block.get("text", ""))
                     elif block.get("type") == "image_url":
-                        image_bonus += 400  # conservative chunk per image
-        # assistant tool calls:
+                        image_bonus += 400  # conservative per-image estimate
+        # assistant tool calls
         if msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
-                total_chars += len(fn.get("arguments", ""))
-    rough = (total_chars // 4) + image_bonus
-    return int(math.ceil(rough * TOKEN_ESTIMATE_BIAS) + TOKEN_ESTIMATE_BUFFER)
+                total_tokens += _count_tokens_text(fn.get("name", ""))
+                total_tokens += _count_tokens_text(fn.get("arguments", ""))
+
+    total_tokens += image_bonus + TOKEN_ESTIMATE_BUFFER
+    return total_tokens
 
 
 def _trim_messages_to_fit(messages: List[Dict[str, Any]], context_limit: int, reserve: int = 2048) -> Tuple[List[Dict[str, Any]], int]:
@@ -221,18 +259,42 @@ def convert_claude_to_openai(
     if claude_request.top_p is not None:
         openai_request["top_p"] = claude_request.top_p
 
-    # Convert tools
+    # Convert tools — handles both standard and schema-less (computer use) tools
     if allow_tools and claude_request.tools:
+        # First pass: detect and convert any schema-less Anthropic tools
+        cu_converted, cu_system_supplement, has_computer_use = convert_schema_less_tools(
+            claude_request.tools
+        )
+
+        # If there are computer-use tools, inject the environment description
+        # into the system prompt so the (non-Claude) model knows about the display.
+        if cu_system_supplement:
+            # Prepend to existing system message or add a new one
+            if openai_messages and openai_messages[0].get("role") == Constants.ROLE_SYSTEM:
+                openai_messages[0]["content"] += "\n" + cu_system_supplement
+            else:
+                openai_messages.insert(0, {
+                    "role": Constants.ROLE_SYSTEM,
+                    "content": cu_system_supplement.strip(),
+                })
+
         openai_tools = []
-        for tool in claude_request.tools:
-            if tool.name and tool.name.strip():
+        for idx, tool in enumerate(claude_request.tools):
+            if not tool.name or not tool.name.strip():
+                continue
+
+            if cu_converted[idx] is not None:
+                # Schema-less tool already converted to function format
+                openai_tools.append(cu_converted[idx])
+            else:
+                # Standard function tool
                 openai_tools.append(
                     {
                         "type": Constants.TOOL_FUNCTION,
                         Constants.TOOL_FUNCTION: {
                             "name": tool.name,
                             "description": tool.description or "",
-                            "parameters": tool.input_schema,
+                            "parameters": tool.input_schema or {"type": "object", "properties": {}},
                         },
                     }
                 )
@@ -245,7 +307,8 @@ def convert_claude_to_openai(
         if choice_type == "auto":
             openai_request["tool_choice"] = "auto"
         elif choice_type == "any":
-            openai_request["tool_choice"] = "auto"
+            # Claude "any" = forced tool use → OpenAI "required"
+            openai_request["tool_choice"] = "required"
         elif choice_type == "tool" and "name" in claude_request.tool_choice:
             openai_request["tool_choice"] = {
                 "type": Constants.TOOL_FUNCTION,

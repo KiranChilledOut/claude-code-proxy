@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "macoscontrol-mcp": {
+      "command": "bash",
+      "args": [
+        "./MCP/macoscontrol-mcp/run.sh"
+      ]
+    }
+  }
+}

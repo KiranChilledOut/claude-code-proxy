@@ -10,7 +10,7 @@ from src.core.config import config
 from src.core.logging import logger
 from src.core.client import OpenAIClient
 from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
-from src.conversion.request_converter import convert_claude_to_openai
+from src.conversion.request_converter import convert_claude_to_openai, _count_tokens_text
 from src.conversion.response_converter import (
     convert_openai_to_claude_response,
     convert_openai_streaming_to_claude_with_cancellation,
@@ -63,6 +63,11 @@ async def validate_api_key(x_api_key: Optional[str] = Header(None), authorizatio
 @router.post("/v1/messages")
 async def create_message(request: ClaudeMessagesRequest, http_request: Request, _: None = Depends(validate_api_key)):
     try:
+        # Log anthropic-beta header if present (for computer use, etc.)
+        beta_header = http_request.headers.get("anthropic-beta", "")
+        if beta_header:
+            logger.info(f"anthropic-beta header: {beta_header}")
+
         logger.debug(
             f"Processing Claude request: model={request.model}, stream={request.stream}"
         )
@@ -135,33 +140,35 @@ async def create_message(request: ClaudeMessagesRequest, http_request: Request, 
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(request: ClaudeTokenCountRequest, _: None = Depends(validate_api_key)):
     try:
-        # For token counting, we'll use a simple estimation
-        # In a real implementation, you might want to use tiktoken or similar
+        # Token counting using tiktoken (cl100k_base) when available,
+        # falling back to char-based estimation otherwise.
 
-        total_chars = 0
+        total_tokens = 0
 
-        # Count system message characters
+        # Count system message tokens
         if request.system:
             if isinstance(request.system, str):
-                total_chars += len(request.system)
+                total_tokens += _count_tokens_text(request.system)
             elif isinstance(request.system, list):
                 for block in request.system:
                     if hasattr(block, "text"):
-                        total_chars += len(block.text)
+                        total_tokens += _count_tokens_text(block.text)
 
-        # Count message characters
+        # Count message tokens
         for msg in request.messages:
+            total_tokens += 4  # per-message overhead
             if msg.content is None:
                 continue
             elif isinstance(msg.content, str):
-                total_chars += len(msg.content)
+                total_tokens += _count_tokens_text(msg.content)
             elif isinstance(msg.content, list):
                 for block in msg.content:
                     if hasattr(block, "text") and block.text is not None:
-                        total_chars += len(block.text)
+                        total_tokens += _count_tokens_text(block.text)
+                    elif hasattr(block, "type") and block.type == "image":
+                        total_tokens += 400  # conservative image estimate
 
-        # Rough estimation: 4 characters per token
-        estimated_tokens = max(1, total_chars // 4)
+        estimated_tokens = max(1, total_tokens)
 
         return {"input_tokens": estimated_tokens}
 
@@ -368,6 +375,39 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
         )
 
 
+@router.get("/v1/models")
+async def list_models(_: None = Depends(validate_api_key)):
+    """List available models mapped to Claude model names.
+
+    Returns a response shaped like the Anthropic models listing so that
+    Claude Code and other SDK clients can validate connectivity.
+    """
+    now = datetime.now().isoformat()
+    # Build unique model entries from the configured mapping
+    model_entries = []
+    seen = set()
+    for claude_id, backend_model, display_name in [
+        ("claude-3-5-haiku-20241022", config.small_model, "Claude 3.5 Haiku (proxied)"),
+        ("claude-sonnet-4-20250514", config.middle_model, "Claude Sonnet 4 (proxied)"),
+        ("claude-opus-4-20250514", config.big_model, "Claude Opus 4 (proxied)"),
+        ("claude-3-5-sonnet-20241022", config.middle_model, "Claude 3.5 Sonnet (proxied)"),
+    ]:
+        if claude_id not in seen:
+            seen.add(claude_id)
+            model_entries.append({
+                "id": claude_id,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "anthropic-proxy",
+                "display_name": display_name,
+                "backend_model": backend_model,
+            })
+    return {
+        "object": "list",
+        "data": model_entries,
+    }
+
+
 @router.get("/")
 async def root():
     """Root endpoint"""
@@ -384,6 +424,7 @@ async def root():
         },
         "endpoints": {
             "messages": "/v1/messages",
+            "models": "/v1/models",
             "count_tokens": "/v1/messages/count_tokens",
             "health": "/health",
             "test_connection": "/test-connection",
