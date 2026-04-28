@@ -11,6 +11,7 @@ The proxy accepts Claude-compatible requests from Claude Code, translates them i
 - [Quick Start](#quick-start)
 - [MCP Support](#mcp-support)
 - [Testing](#testing)
+- [Observability](#observability)
 - [Development](#development)
 - [Documentation](#documentation)
 - [Scope](#scope)
@@ -132,6 +133,18 @@ pytest -q tests/test_image_routing.py
 RUN_PROXY_INTEGRATION_TESTS=1 pytest -q tests/test_main.py
 ```
 
+## Observability
+
+The proxy serves a local dashboard at:
+
+```bash
+http://localhost:8083/dashboard
+```
+
+It tracks configured provider/model routing, token usage, estimated cost from
+`MODEL_PRICES_JSON`, latency, failures, and tool calls. Docker Compose persists
+the dashboard database under `./data/observability.sqlite3`.
+
 ## Development
 
 Common commands:
@@ -150,6 +163,7 @@ Tracked project documentation lives in `docs/`:
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - [docs/TOOL_CALL_FORMAT.md](./docs/TOOL_CALL_FORMAT.md)
 - [docs/MCP_SERVER_GUIDE.md](./docs/MCP_SERVER_GUIDE.md)
+- [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
 - [docs/GLM_QUIRKS.md](./docs/GLM_QUIRKS.md)
 - [docs/BUGS_FIXED.md](./docs/BUGS_FIXED.md)
 - [docs/BINARY_PACKAGING.md](./docs/BINARY_PACKAGING.md)

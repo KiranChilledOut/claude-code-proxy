@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Proxy Observability</title>
+    <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Claude Proxy Observability</h1>
+          <p id="providerLine">Loading provider...</p>
+        </div>
+        <div class="toolbar">
+          <select id="windowSelect" aria-label="Time window">
+            <option value="1">1h</option>
+            <option value="6">6h</option>
+            <option value="24" selected>24h</option>
+            <option value="72">72h</option>
+            <option value="168">7d</option>
+          </select>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <section class="cards metric-grid">
+        <article class="metric">
+          <span>Requests</span>
+          <strong id="requestCount">0</strong>
+          <small id="allTimeRequests">0 all time</small>
+        </article>
+        <article class="metric">
+          <span>Estimated Cost</span>
+          <strong id="costTotal">$0.0000</strong>
+          <small id="allTimeCost">$0.0000 all time</small>
+        </article>
+        <article class="metric">
+          <span>Tokens</span>
+          <strong id="tokenTotal">0</strong>
+          <small id="tokenSplit">0 in / 0 out</small>
+        </article>
+        <article class="metric">
+          <span>Failures</span>
+          <strong id="failureCount">0</strong>
+          <small id="failureRate">0%</small>
+        </article>
+        <article class="metric">
+          <span>Avg Latency</span>
+          <strong id="avgLatency">0 ms</strong>
+          <small>window average</small>
+        </article>
+        <article class="metric">
+          <span>Tool Calls</span>
+          <strong id="toolCount">0</strong>
+          <small id="toolArgsMode">arguments disabled</small>
+        </article>
+      </section>
+
+      <section class="panel model-panel">
+        <div class="panel-head">
+          <h2>Provider And Models</h2>
+        </div>
+        <div id="modelCards" class="model-grid"></div>
+      </section>
+
+      <section class="chart-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Tokens Over Time</h2>
+          </div>
+          <canvas id="tokensChart" height="210"></canvas>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Cost Over Time</h2>
+          </div>
+          <canvas id="costChart" height="210"></canvas>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Model Breakdown</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Requests</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+                <th>Latency</th>
+                <th>Observed Tok/s</th>
+                <th>Advertised Tok/s</th>
+                <th>Failures</th>
+              </tr>
+            </thead>
+            <tbody id="modelStatsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent Requests</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Claude Model</th>
+                <th>Backend Model</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+                <th>Latency</th>
+                <th>Tools</th>
+              </tr>
+            </thead>
+            <tbody id="requestsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="split">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Failures</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Model</th>
+                  <th>Status</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody id="failuresBody"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Tool Calls</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Tool</th>
+                  <th>Model</th>
+                  <th>Args</th>
+                </tr>
+              </thead>
+              <tbody id="toolCallsBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script src="/dashboard/assets/dashboard.js"></script>
+  </body>
+</html>

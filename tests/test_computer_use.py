@@ -27,7 +27,9 @@ def test_convert_schema_less_tools_converts_supported_tools_and_builds_prompt():
     assert "1440x900" in computer_tool["function"]["description"]
     assert "open_app" in computer_tool["function"]["parameters"]["properties"]["action"]["enum"]
     assert "open_url" in computer_tool["function"]["parameters"]["properties"]["action"]["enum"]
-    assert "cursor_position" in computer_tool["function"]["parameters"]["properties"]["action"]["enum"]
+    assert (
+        "cursor_position" in computer_tool["function"]["parameters"]["properties"]["action"]["enum"]
+    )
 
     bash_tool = converted[1]
     assert bash_tool["function"]["name"] == "bash"

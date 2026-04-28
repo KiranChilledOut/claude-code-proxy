@@ -4,8 +4,8 @@ import pytest
 
 from src.conversion.response_converter import (
     _sanitize_tool_arguments,
-    convert_openai_to_claude_response,
     convert_openai_streaming_to_claude_with_cancellation,
+    convert_openai_to_claude_response,
 )
 from src.models.claude import ClaudeMessage, ClaudeMessagesRequest
 
@@ -37,7 +37,7 @@ class _DummyLogger:
 def test_sanitize_tool_arguments_extracts_xml_payload():
     name, arguments = _sanitize_tool_arguments(
         "Bash",
-        '<arg_key>command</arg_key><arg_value>ls -la</arg_value>',
+        "<arg_key>command</arg_key><arg_value>ls -la</arg_value>",
     )
 
     assert name == "Bash"
@@ -45,7 +45,7 @@ def test_sanitize_tool_arguments_extracts_xml_payload():
 
 
 def test_sanitize_tool_arguments_extracts_args_embedded_in_name():
-    name, arguments = _sanitize_tool_arguments("bash(command=\"ls -la\")", "")
+    name, arguments = _sanitize_tool_arguments('bash(command="ls -la")', "")
 
     assert name == "bash"
     assert json.loads(arguments) == {"command": "ls -la"}
@@ -69,7 +69,7 @@ def test_non_streaming_response_sanitizes_tool_calls():
                             "id": "call_1",
                             "type": "function",
                             "function": {
-                                "name": "bash(command=\"ls -la\")",
+                                "name": 'bash(command="ls -la")',
                                 "arguments": "",
                             },
                         }
@@ -95,15 +95,11 @@ def test_non_streaming_response_sanitizes_tool_calls():
 
 async def _fake_stream():
     # Regular text delta
-    yield 'data: ' + json.dumps(
-        {"choices": [{"delta": {"content": "A"}, "finish_reason": None}]}
-    )
+    yield "data: " + json.dumps({"choices": [{"delta": {"content": "A"}, "finish_reason": None}]})
     # Completion marker chunk
-    yield 'data: ' + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+    yield "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]})
     # Unexpected chunk after finish_reason that should be ignored
-    yield 'data: ' + json.dumps(
-        {"choices": [{"delta": {"content": "B"}, "finish_reason": None}]}
-    )
+    yield "data: " + json.dumps({"choices": [{"delta": {"content": "B"}, "finish_reason": None}]})
     yield "data: [DONE]"
 
 
@@ -119,7 +115,7 @@ async def _fake_tool_stream():
                                 "id": "call_1",
                                 "type": "function",
                                 "function": {
-                                    "name": "bash(command=\"ls -la\")",
+                                    "name": 'bash(command="ls -la")',
                                 },
                             }
                         ]
@@ -129,9 +125,7 @@ async def _fake_tool_stream():
             ]
         }
     )
-    yield "data: " + json.dumps(
-        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
-    )
+    yield "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
     yield "data: [DONE]"
 
 

@@ -1,7 +1,8 @@
-import httpx
 import asyncio
 import os
 import time
+
+import httpx
 
 if __name__ != "__main__":
     import pytest
@@ -13,6 +14,7 @@ if __name__ != "__main__":
         )
     pytestmark = pytest.mark.asyncio
 
+
 async def test_log_rotation():
     # Test the endpoint with large payloads to trigger log rotation
     url = "http://localhost:8083/api/event_logging/batch"
@@ -23,7 +25,10 @@ async def test_log_rotation():
     async with httpx.AsyncClient() as client:
         for i in range(1000):  # Send 1000 requests
             payload = [
-                {"event_type": "log_rotation_test", "data": {"id": i, "payload": large_data, "timestamp": time.time()}}
+                {
+                    "event_type": "log_rotation_test",
+                    "data": {"id": i, "payload": large_data, "timestamp": time.time()},
+                }
             ]
 
             response = await client.post(url, json=payload)
@@ -34,6 +39,7 @@ async def test_log_rotation():
 
             # Small delay to avoid overwhelming
             await asyncio.sleep(0.01)
+
 
 if __name__ == "__main__":
     asyncio.run(test_log_rotation())

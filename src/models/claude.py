@@ -1,13 +1,17 @@
+from typing import Any, Dict, List, Literal, Optional, Union
+
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional, Union, Literal
+
 
 class ClaudeContentBlockText(BaseModel):
     type: Literal["text"]
     text: str
 
+
 class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
     source: Dict[str, Any]
+
 
 class ClaudeContentBlockToolUse(BaseModel):
     type: Literal["tool_use"]
@@ -15,18 +19,32 @@ class ClaudeContentBlockToolUse(BaseModel):
     name: str
     input: Dict[str, Any]
 
+
 class ClaudeContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: Union[str, List[Dict[str, Any]], Dict[str, Any]]
 
+
 class ClaudeSystemContent(BaseModel):
     type: Literal["text"]
     text: str
 
+
 class ClaudeMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: Union[str, List[Union[ClaudeContentBlockText, ClaudeContentBlockImage, ClaudeContentBlockToolUse, ClaudeContentBlockToolResult]]]
+    content: Union[
+        str,
+        List[
+            Union[
+                ClaudeContentBlockText,
+                ClaudeContentBlockImage,
+                ClaudeContentBlockToolUse,
+                ClaudeContentBlockToolResult,
+            ]
+        ],
+    ]
+
 
 class ClaudeTool(BaseModel):
     """Represents both standard function tools and schema-less Anthropic tools.
@@ -35,6 +53,7 @@ class ClaudeTool(BaseModel):
     Schema-less tools have: type (e.g. "computer_20251124"), name, and
     type-specific fields (display_width_px, display_height_px, etc.)
     """
+
     # Common fields
     name: str
     type: Optional[str] = None  # e.g. "computer_20251124", "bash_20250124", "text_editor_20250728"
@@ -55,12 +74,13 @@ class ClaudeTool(BaseModel):
         if self.type is None:
             return False
         return any(
-            self.type.startswith(prefix)
-            for prefix in ("computer_", "bash_", "text_editor_")
+            self.type.startswith(prefix) for prefix in ("computer_", "bash_", "text_editor_")
         )
+
 
 class ClaudeThinkingConfig(BaseModel):
     enabled: bool = True
+
 
 class ClaudeMessagesRequest(BaseModel):
     model: str
@@ -81,6 +101,7 @@ class ClaudeMessagesRequest(BaseModel):
 
     class Config:
         extra = "allow"  # Forward compatibility
+
 
 class ClaudeTokenCountRequest(BaseModel):
     model: str

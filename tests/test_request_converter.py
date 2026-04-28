@@ -4,13 +4,13 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.conversion.request_converter import convert_claude_to_openai
-from src.core.model_manager import model_manager
 from src.core.config import config
+from src.core.model_manager import model_manager
 from src.models.claude import (
-    ClaudeMessagesRequest,
-    ClaudeMessage,
-    ClaudeContentBlockText,
     ClaudeContentBlockImage,
+    ClaudeContentBlockText,
+    ClaudeMessage,
+    ClaudeMessagesRequest,
 )
 
 
@@ -120,14 +120,8 @@ def test_followup_without_image_keeps_tools_and_model():
                     ),
                 ],
             ),
-            ClaudeMessage(
-                role="assistant",
-                content="ALL DONE"
-            ),
-            ClaudeMessage(
-                role="user",
-                content="create a file called test"
-            ),
+            ClaudeMessage(role="assistant", content="ALL DONE"),
+            ClaudeMessage(role="user", content="create a file called test"),
         ],
         tools=[
             {
@@ -146,7 +140,8 @@ def test_followup_without_image_keeps_tools_and_model():
     assert openai_request.get("tool_choice") == "auto"
     # No image content should remain
     assert not any(
-        isinstance(msg.get("content"), list) and any(part.get("type") == "image_url" for part in msg["content"])
+        isinstance(msg.get("content"), list)
+        and any(part.get("type") == "image_url" for part in msg["content"])
         for msg in openai_request["messages"]
     )
 

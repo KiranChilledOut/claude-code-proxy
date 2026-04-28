@@ -1,12 +1,27 @@
-from fastapi import FastAPI
-from src.api.endpoints import router as api_router
-import uvicorn
 import sys
+
+import uvicorn
+from fastapi import FastAPI
+
+from src.api.endpoints import router as api_router
 from src.core.config import config
+from src.observability.routes import router as observability_router
+from src.observability.store import observability_recorder
 
 app = FastAPI(title="Claude-to-OpenAI API Proxy", version="1.0.0")
 
 app.include_router(api_router)
+app.include_router(observability_router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    await observability_recorder.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await observability_recorder.stop()
 
 
 def main():
@@ -26,13 +41,9 @@ def main():
             f"  OPENAI_BASE_URL - OpenAI-compatible API base URL (default: {config.openai_base_url})"
         )
         print(f"  BIG_MODEL - Model for opus requests (default: {config.big_model})")
-        print(
-            f"  MIDDLE_MODEL - Model for sonnet requests (default: {config.middle_model})"
-        )
+        print(f"  MIDDLE_MODEL - Model for sonnet requests (default: {config.middle_model})")
         print(f"  SMALL_MODEL - Model for haiku requests (default: {config.small_model})")
-        print(
-            f"  VISION_MODEL - Model for image requests (default: {config.vision_model})"
-        )
+        print(f"  VISION_MODEL - Model for image requests (default: {config.vision_model})")
         print(f"  HOST - Server host (default: {config.host})")
         print(f"  PORT - Server port (default: {config.port})")
         print(f"  LOG_LEVEL - Logging level (default: {config.log_level})")
@@ -41,7 +52,9 @@ def main():
             f"  MIN_TOKENS_LIMIT - Fallback token limit for invalid requests (default: {config.min_tokens_limit})"
         )
         print(f"  REQUEST_TIMEOUT - Request timeout in seconds (default: {config.request_timeout})")
-        print(f"  MAX_RETRIES - Retry attempts for provider requests (default: {config.max_retries})")
+        print(
+            f"  MAX_RETRIES - Retry attempts for provider requests (default: {config.max_retries})"
+        )
         print("")
         print("Model mapping:")
         print(f"  Claude haiku models -> {config.small_model}")
@@ -63,16 +76,22 @@ def main():
     print(f"   Server: {config.host}:{config.port}")
     validation_enabled = bool(config.anthropic_api_key and not config.ignore_client_api_key)
     print(f"   Client API Key Validation: {'Enabled' if validation_enabled else 'Disabled'}")
-    print(f"   Ignore Client API Key Headers: {'Enabled' if config.ignore_client_api_key else 'Disabled'}")
+    print(
+        f"   Ignore Client API Key Headers: {'Enabled' if config.ignore_client_api_key else 'Disabled'}"
+    )
+    print(
+        f"   Observability: {'Enabled' if config.observability_enabled else 'Disabled'} "
+        f"({config.observability_db_path})"
+    )
     print("")
 
     # Parse log level - extract just the first word to handle comments
     log_level = config.log_level.split()[0].lower()
-    
+
     # Validate and set default if invalid
-    valid_levels = ['debug', 'info', 'warning', 'error', 'critical']
+    valid_levels = ["debug", "info", "warning", "error", "critical"]
     if log_level not in valid_levels:
-        log_level = 'info'
+        log_level = "info"
 
     # Start server
     uvicorn.run(

@@ -1,21 +1,24 @@
-from fastapi import APIRouter, HTTPException, Request, Header, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import datetime
-import uuid
 import json
 import os
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from src.conversion.request_converter import _count_tokens_text, convert_claude_to_openai
+from src.conversion.response_converter import (
+    convert_openai_streaming_to_claude_with_cancellation,
+    convert_openai_to_claude_response,
+)
+from src.core.client import OpenAIClient
 from src.core.config import config
 from src.core.logging import logger
-from src.core.client import OpenAIClient
-from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
-from src.conversion.request_converter import convert_claude_to_openai, _count_tokens_text
-from src.conversion.response_converter import (
-    convert_openai_to_claude_response,
-    convert_openai_streaming_to_claude_with_cancellation,
-)
 from src.core.model_manager import model_manager
+from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
+from src.observability.store import observability_recorder
 
 router = APIRouter()
 
@@ -31,7 +34,68 @@ openai_client = OpenAIClient(
     max_retries=config.max_retries,
 )
 
-async def validate_api_key(x_api_key: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_tool_calls_from_claude_response(claude_response: dict) -> list:
+    tool_calls = []
+    for block in claude_response.get("content", []) or []:
+        if block.get("type") != "tool_use":
+            continue
+        tool_calls.append(
+            {
+                "tool_id": block.get("id"),
+                "tool_name": block.get("name"),
+                "arguments": block.get("input"),
+                "status": "emitted",
+                "sanitized": False,
+            }
+        )
+    return tool_calls
+
+
+def _record_message_observability(
+    *,
+    request_id: str,
+    started_at: str,
+    started_at_unix: float,
+    start_monotonic: float,
+    request: ClaudeMessagesRequest,
+    backend_model: Optional[str],
+    stream: bool,
+    status: str,
+    http_status: Optional[int],
+    usage: Optional[dict] = None,
+    stop_reason: Optional[str] = None,
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+    tool_calls: Optional[list] = None,
+) -> None:
+    observability_recorder.record_request(
+        request_id=request_id,
+        started_at=started_at,
+        started_at_unix=started_at_unix,
+        completed_at=_utc_now_iso(),
+        base_url=config.openai_base_url,
+        claude_model=request.model,
+        backend_model=backend_model,
+        stream=stream,
+        status=status,
+        http_status=http_status,
+        latency_ms=(time.monotonic() - start_monotonic) * 1000,
+        usage=usage,
+        stop_reason=stop_reason,
+        error_type=error_type,
+        error_message=error_message,
+        tool_calls=tool_calls,
+    )
+
+
+async def validate_api_key(
+    x_api_key: Optional[str] = Header(None), authorization: Optional[str] = Header(None)
+):
     """Validate the client's API key from either x-api-key header or Authorization header."""
     # Default behavior for this proxy: drop/ignore any client-supplied API key.
     # The proxy always uses server-side OPENAI_API_KEY for upstream calls.
@@ -41,42 +105,45 @@ async def validate_api_key(x_api_key: Optional[str] = Header(None), authorizatio
         return
 
     client_api_key = None
-    
+
     # Extract API key from headers
     if x_api_key:
         client_api_key = x_api_key
     elif authorization and authorization.startswith("Bearer "):
         client_api_key = authorization.replace("Bearer ", "")
-    
+
     # Skip validation if ANTHROPIC_API_KEY is not set in the environment
     if not config.anthropic_api_key:
         return
-        
+
     # Validate the client API key
     if not client_api_key or not config.validate_client_api_key(client_api_key):
         logger.warning(f"Invalid API key provided by client")
         raise HTTPException(
-            status_code=401,
-            detail="Invalid API key. Please provide a valid Anthropic API key."
+            status_code=401, detail="Invalid API key. Please provide a valid Anthropic API key."
         )
 
+
 @router.post("/v1/messages")
-async def create_message(request: ClaudeMessagesRequest, http_request: Request, _: None = Depends(validate_api_key)):
+async def create_message(
+    request: ClaudeMessagesRequest, http_request: Request, _: None = Depends(validate_api_key)
+):
+    request_id = str(uuid.uuid4())
+    started_at = _utc_now_iso()
+    started_at_unix = time.time()
+    start_monotonic = time.monotonic()
+    backend_model = None
     try:
         # Log anthropic-beta header if present (for computer use, etc.)
         beta_header = http_request.headers.get("anthropic-beta", "")
         if beta_header:
             logger.info(f"anthropic-beta header: {beta_header}")
 
-        logger.debug(
-            f"Processing Claude request: model={request.model}, stream={request.stream}"
-        )
-
-        # Generate unique request ID for cancellation tracking
-        request_id = str(uuid.uuid4())
+        logger.debug(f"Processing Claude request: model={request.model}, stream={request.stream}")
 
         # Convert Claude request to OpenAI format
         openai_request = convert_claude_to_openai(request, model_manager)
+        backend_model = openai_request.get("model")
 
         # Check if client disconnected before processing
         if await http_request.is_disconnected():
@@ -88,15 +155,53 @@ async def create_message(request: ClaudeMessagesRequest, http_request: Request, 
                 openai_stream = openai_client.create_chat_completion_stream(
                     openai_request, request_id
                 )
+                stream_metrics = {
+                    "usage": {},
+                    "tool_calls": [],
+                    "stop_reason": None,
+                    "status": "success",
+                }
+
+                async def observed_stream():
+                    stream_status = "success"
+                    stream_error = None
+                    try:
+                        async for event in convert_openai_streaming_to_claude_with_cancellation(
+                            openai_stream,
+                            request,
+                            logger,
+                            http_request,
+                            openai_client,
+                            request_id,
+                            observability_context=stream_metrics,
+                        ):
+                            yield event
+                        stream_status = stream_metrics.get("status") or "success"
+                        stream_error = stream_metrics.get("error_message")
+                    except Exception as exc:
+                        stream_status = "error"
+                        stream_error = str(exc)
+                        raise
+                    finally:
+                        _record_message_observability(
+                            request_id=request_id,
+                            started_at=started_at,
+                            started_at_unix=started_at_unix,
+                            start_monotonic=start_monotonic,
+                            request=request,
+                            backend_model=backend_model,
+                            stream=True,
+                            status=stream_status,
+                            http_status=200 if stream_status == "success" else 500,
+                            usage=stream_metrics.get("usage"),
+                            stop_reason=stream_metrics.get("stop_reason"),
+                            error_type=stream_metrics.get("error_type"),
+                            error_message=stream_error,
+                            tool_calls=stream_metrics.get("tool_calls"),
+                        )
+
                 return StreamingResponse(
-                    convert_openai_streaming_to_claude_with_cancellation(
-                        openai_stream,
-                        request,
-                        logger,
-                        http_request,
-                        openai_client,
-                        request_id,
-                    ),
+                    observed_stream(),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -116,17 +221,53 @@ async def create_message(request: ClaudeMessagesRequest, http_request: Request, 
                     "type": "error",
                     "error": {"type": "api_error", "message": error_message},
                 }
+                _record_message_observability(
+                    request_id=request_id,
+                    started_at=started_at,
+                    started_at_unix=started_at_unix,
+                    start_monotonic=start_monotonic,
+                    request=request,
+                    backend_model=backend_model,
+                    stream=True,
+                    status="error",
+                    http_status=e.status_code,
+                    error_type="HTTPException",
+                    error_message=error_message,
+                )
                 return JSONResponse(status_code=e.status_code, content=error_response)
         else:
             # Non-streaming response
-            openai_response = await openai_client.create_chat_completion(
-                openai_request, request_id
-            )
-            claude_response = convert_openai_to_claude_response(
-                openai_response, request
+            openai_response = await openai_client.create_chat_completion(openai_request, request_id)
+            claude_response = convert_openai_to_claude_response(openai_response, request)
+            _record_message_observability(
+                request_id=request_id,
+                started_at=started_at,
+                started_at_unix=started_at_unix,
+                start_monotonic=start_monotonic,
+                request=request,
+                backend_model=backend_model,
+                stream=False,
+                status="success",
+                http_status=200,
+                usage=claude_response.get("usage"),
+                stop_reason=claude_response.get("stop_reason"),
+                tool_calls=_extract_tool_calls_from_claude_response(claude_response),
             )
             return claude_response
-    except HTTPException:
+    except HTTPException as e:
+        _record_message_observability(
+            request_id=request_id,
+            started_at=started_at,
+            started_at_unix=started_at_unix,
+            start_monotonic=start_monotonic,
+            request=request,
+            backend_model=backend_model,
+            stream=bool(request.stream),
+            status="cancelled" if e.status_code == 499 else "error",
+            http_status=e.status_code,
+            error_type="HTTPException",
+            error_message=str(e.detail),
+        )
         raise
     except Exception as e:
         import traceback
@@ -134,6 +275,19 @@ async def create_message(request: ClaudeMessagesRequest, http_request: Request, 
         logger.error(f"Unexpected error processing request: {e}")
         logger.error(traceback.format_exc())
         error_message = openai_client.classify_openai_error(str(e))
+        _record_message_observability(
+            request_id=request_id,
+            started_at=started_at,
+            started_at_unix=started_at_unix,
+            start_monotonic=start_monotonic,
+            request=request,
+            backend_model=backend_model,
+            stream=bool(request.stream),
+            status="error",
+            http_status=500,
+            error_type=type(e).__name__,
+            error_message=error_message,
+        )
         raise HTTPException(status_code=500, detail=error_message)
 
 
@@ -185,7 +339,9 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "openai_api_configured": bool(config.openai_api_key),
         "api_key_valid": config.validate_api_key(),
-        "client_api_key_validation": bool(config.anthropic_api_key and not config.ignore_client_api_key),
+        "client_api_key_validation": bool(
+            config.anthropic_api_key and not config.ignore_client_api_key
+        ),
         "client_api_key_ignored": bool(config.ignore_client_api_key),
     }
 
@@ -263,16 +419,17 @@ async def parse_flexible_events(request: Request):
 
         # Try to parse as JSON
         try:
-            data = json.loads(body.decode('utf-8'))
+            data = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received: {e}")
             # Try to fix common JSON issues and parse again
-            text = body.decode('utf-8')
+            text = body.decode("utf-8")
 
             # Try to fix unquoted property names (common issue)
             import re
+
             # Replace unquoted property names with quoted ones
-            fixed_text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+            fixed_text = re.sub(r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)", r'\1"\2"\3', text)
 
             try:
                 data = json.loads(fixed_text)
@@ -329,8 +486,8 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
                     "message": "No valid events found in request",
                     "timestamp": timestamp,
                     "events_logged": 0,
-                    "note": "Request body may be malformed"
-                }
+                    "note": "Request body may be malformed",
+                },
             )
 
         # Define log file path
@@ -342,11 +499,7 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
         # Append each event as JSON line with timestamp and client IP
         with open(log_file_path, "a", encoding="utf-8") as f:
             for event in events:
-                log_entry = {
-                    "timestamp": timestamp,
-                    "client_ip": client_ip,
-                    "event": event
-                }
+                log_entry = {"timestamp": timestamp, "client_ip": client_ip, "event": event}
                 # Write as JSON line
                 f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
@@ -359,19 +512,15 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
                 "status": "success",
                 "message": f"Processed {len(events)} events",
                 "timestamp": timestamp,
-                "events_logged": len(events)
-            }
+                "events_logged": len(events),
+            },
         )
 
     except Exception as e:
         logger.error(f"Error in event logging: {e}")
         return JSONResponse(
             status_code=500,
-            content={
-                "status": "error",
-                "message": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+            content={"status": "error", "message": str(e), "timestamp": datetime.now().isoformat()},
         )
 
 
@@ -379,11 +528,11 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
 async def list_models(_: None = Depends(validate_api_key)):
     """List available models mapped to Claude model names.
 
-    Returns a response shaped like the Anthropic models listing so that
-    Claude Code and other SDK clients can validate connectivity.
-`
-    Model IDs are dynamically generated to support all current and future
-    Claude models. Routing is handled by pattern matching in ModelManager.
+        Returns a response shaped like the Anthropic models listing so that
+        Claude Code and other SDK clients can validate connectivity.
+    `
+        Model IDs are dynamically generated to support all current and future
+        Claude models. Routing is handled by pattern matching in ModelManager.
     """
     now = datetime.now().isoformat()
     model_entries = []
@@ -435,14 +584,16 @@ async def list_models(_: None = Depends(validate_api_key)):
         for claude_id, display_name in tier_config["variants"]:
             if claude_id not in seen:
                 seen.add(claude_id)
-                model_entries.append({
-                    "id": claude_id,
-                    "object": "model",
-                    "created": 1700000000,
-                    "owned_by": "anthropic-proxy",
-                    "display_name": display_name,
-                    "backend_model": tier_config["backend"],
-                })
+                model_entries.append(
+                    {
+                        "id": claude_id,
+                        "object": "model",
+                        "created": 1700000000,
+                        "owned_by": "anthropic-proxy",
+                        "display_name": display_name,
+                        "backend_model": tier_config["backend"],
+                    }
+                )
 
     # Also include any custom model configurations from env
     if config.big_model:
@@ -455,14 +606,16 @@ async def list_models(_: None = Depends(validate_api_key)):
         for model_id, model_type in custom_models:
             if model_id and model_id not in seen:
                 seen.add(model_id)
-                model_entries.append({
-                    "id": model_id,
-                    "object": "model",
-                    "created": 1700000000,
-                    "owned_by": "anthropic-proxy",
-                    "display_name": f"Custom {model_type} (proxied)",
-                    "backend_model": model_id,
-                })
+                model_entries.append(
+                    {
+                        "id": model_id,
+                        "object": "model",
+                        "created": 1700000000,
+                        "owned_by": "anthropic-proxy",
+                        "display_name": f"Custom {model_type} (proxied)",
+                        "backend_model": model_id,
+                    }
+                )
 
     return {
         "object": "list",

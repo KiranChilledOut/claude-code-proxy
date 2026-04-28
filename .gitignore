@@ -183,5 +183,11 @@ pyrightconfig.json
 # Local MCP overrides
 .mcp.local.json
 
+# Local observability data
+data/
+observability.sqlite3*
+*.sqlite3-wal
+*.sqlite3-shm
+
 # OS/editor noise
 .DS_Store

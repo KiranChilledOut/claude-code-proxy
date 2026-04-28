@@ -114,9 +114,7 @@ def main() -> int:
                 "max_tokens": 8,
                 "temperature": 0,
             }
-            chat_resp = client.post(
-                f"{base_url}/chat/completions", headers=headers, json=payload
-            )
+            chat_resp = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
             _print_response(chat_resp)
 
             if chat_resp.status_code == 401:
@@ -130,11 +128,7 @@ def main() -> int:
                 return 1
 
             data = chat_resp.json()
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "<no-content>")
-            )
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "<no-content>")
             print("\nSUCCESS: provider auth and completion call both succeeded.")
             print(f"model_reply={json.dumps(content)}")
             return 0

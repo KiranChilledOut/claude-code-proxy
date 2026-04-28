@@ -18,7 +18,7 @@ The schemas below are extracted from the Anthropic documentation and cover:
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -156,13 +156,11 @@ TEXT_EDITOR_TOOL_SCHEMA: Dict[str, Any] = {
 # Detection helpers
 # ---------------------------------------------------------------------------
 
+
 def is_computer_use_tool(tool) -> bool:
     """Check if a tool is a schema-less Anthropic computer-use family tool."""
     tool_type = getattr(tool, "type", None) or ""
-    return any(
-        tool_type.startswith(prefix)
-        for prefix in ("computer_", "bash_", "text_editor_")
-    )
+    return any(tool_type.startswith(prefix) for prefix in ("computer_", "bash_", "text_editor_"))
 
 
 def get_schema_for_tool(tool) -> Optional[Dict[str, Any]]:
@@ -239,6 +237,7 @@ def build_computer_use_system_prompt(tools) -> str:
 # Request-side conversion
 # ---------------------------------------------------------------------------
 
+
 def convert_schema_less_tools(tools) -> tuple:
     """Convert schema-less Anthropic tools to standard OpenAI function tools.
 
@@ -275,17 +274,20 @@ def convert_schema_less_tools(tools) -> tuple:
             elif tool_type.startswith("text_editor_"):
                 desc = "View, create, and edit text files using commands like view, create, str_replace, insert, undo_edit."
 
-            converted.append({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": desc,
-                    "parameters": schema,
-                },
-            })
+            converted.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": desc,
+                        "parameters": schema,
+                    },
+                }
+            )
             logger.info(
                 "Converted schema-less tool '%s' (type=%s) to function tool",
-                tool.name, tool_type,
+                tool.name,
+                tool_type,
             )
         else:
             # Standard tool — will be converted by the normal path, mark as None

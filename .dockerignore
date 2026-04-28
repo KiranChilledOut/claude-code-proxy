@@ -1,0 +1,17 @@
+.env
+.claude/
+.claude.json
+.claude.local/
+.mcp.local.json
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+Claude-proxy.log
+Claude-proxy.log.bak
+observability.sqlite3*
+*.sqlite3-wal
+*.sqlite3-shm

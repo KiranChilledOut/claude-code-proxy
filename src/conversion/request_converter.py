@@ -1,14 +1,15 @@
 import json
-import math
 import logging
-from typing import Dict, Any, List, Tuple
-from src.core.constants import Constants
-from src.models.claude import ClaudeMessagesRequest, ClaudeMessage
-from src.core.config import config
+import math
+from typing import Any, Dict, List, Tuple
+
 from src.conversion.computer_use import (
-    is_computer_use_tool,
     convert_schema_less_tools,
+    is_computer_use_tool,
 )
+from src.core.config import config
+from src.core.constants import Constants
+from src.models.claude import ClaudeMessage, ClaudeMessagesRequest
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ _tiktoken_available = False
 
 try:
     import tiktoken
+
     _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
     _tiktoken_available = True
     logger.info("tiktoken loaded successfully — using cl100k_base for token estimation")
@@ -98,7 +100,9 @@ def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
     return total_tokens
 
 
-def _trim_messages_to_fit(messages: List[Dict[str, Any]], context_limit: int, reserve: int = 2048) -> Tuple[List[Dict[str, Any]], int]:
+def _trim_messages_to_fit(
+    messages: List[Dict[str, Any]], context_limit: int, reserve: int = 2048
+) -> Tuple[List[Dict[str, Any]], int]:
     """
     Drop oldest messages until the estimated prompt fits within context_limit - reserve.
     Returns (trimmed_messages, dropped_count).
@@ -110,7 +114,11 @@ def _trim_messages_to_fit(messages: List[Dict[str, Any]], context_limit: int, re
         if est <= max(context_limit - reserve, 1):
             break
         # Prefer to drop the oldest non-system message first; if first is system and list has more, drop second.
-        drop_idx = 0 if len(trimmed) == 1 else (0 if trimmed[0].get("role") != Constants.ROLE_SYSTEM else 1)
+        drop_idx = (
+            0
+            if len(trimmed) == 1
+            else (0 if trimmed[0].get("role") != Constants.ROLE_SYSTEM else 1)
+        )
         trimmed.pop(drop_idx if drop_idx < len(trimmed) else 0)
         dropped += 1
     return trimmed, dropped
@@ -122,13 +130,18 @@ def convert_claude_to_openai(
     """Convert Claude API request format to OpenAI format."""
     allow_tools = not config.disable_tools
     # Only treat the latest user message as image-bearing for routing/tool decisions
-    has_image = bool(model_manager and model_manager.contains_image_content(
-        claude_request.messages, latest_user_only=True
-    ))
+    has_image = bool(
+        model_manager
+        and model_manager.contains_image_content(claude_request.messages, latest_user_only=True)
+    )
 
     # Map model
-    openai_model = model_manager.map_claude_model_to_openai(claude_request.model, claude_request.messages)
-    logger.info(f"Selected model: {openai_model} for request with {len(claude_request.messages)} messages")
+    openai_model = model_manager.map_claude_model_to_openai(
+        claude_request.model, claude_request.messages
+    )
+    logger.info(
+        f"Selected model: {openai_model} for request with {len(claude_request.messages)} messages"
+    )
 
     # Convert messages
     openai_messages = []
@@ -148,10 +161,7 @@ def convert_claude_to_openai(
                 for block in claude_request.system:
                     if hasattr(block, "type") and block.type == Constants.CONTENT_TEXT:
                         text_parts.append(block.text)
-                    elif (
-                        isinstance(block, dict)
-                        and block.get("type") == Constants.CONTENT_TEXT
-                    ):
+                    elif isinstance(block, dict) and block.get("type") == Constants.CONTENT_TEXT:
                         text_parts.append(block.get("text", ""))
                 system_text = "\n\n".join(text_parts)
 
@@ -163,14 +173,14 @@ def convert_claude_to_openai(
         # Find the most recent user message that contains an image and only send that
         latest_image_msg = None
         for message in reversed(claude_request.messages):
-            if message.role == Constants.ROLE_USER and model_manager.contains_image_content([message]):
+            if message.role == Constants.ROLE_USER and model_manager.contains_image_content(
+                [message]
+            ):
                 latest_image_msg = message
                 break
 
         if latest_image_msg:
-            openai_messages.append(
-                convert_claude_user_message(latest_image_msg, allow_images=True)
-            )
+            openai_messages.append(convert_claude_user_message(latest_image_msg, allow_images=True))
     else:
         # Original multi-turn handling for text-only flow
         # Add system message if present
@@ -183,10 +193,7 @@ def convert_claude_to_openai(
                 for block in claude_request.system:
                     if hasattr(block, "type") and block.type == Constants.CONTENT_TEXT:
                         text_parts.append(block.text)
-                    elif (
-                        isinstance(block, dict)
-                        and block.get("type") == Constants.CONTENT_TEXT
-                    ):
+                    elif isinstance(block, dict) and block.get("type") == Constants.CONTENT_TEXT:
                         text_parts.append(block.get("text", ""))
                 system_text = "\n\n".join(text_parts)
 
@@ -231,7 +238,9 @@ def convert_claude_to_openai(
     context_limit = _get_context_limit(openai_model)
     openai_messages, dropped = _trim_messages_to_fit(openai_messages, context_limit, reserve=2048)
     if dropped:
-        logger.warning(f"Trimmed {dropped} oldest messages to fit context window for model {openai_model}")
+        logger.warning(
+            f"Trimmed {dropped} oldest messages to fit context window for model {openai_model}"
+        )
 
     prompt_estimate = _estimate_prompt_tokens(openai_messages)
     available = max(context_limit - prompt_estimate - 2048, 1)
@@ -273,10 +282,13 @@ def convert_claude_to_openai(
             if openai_messages and openai_messages[0].get("role") == Constants.ROLE_SYSTEM:
                 openai_messages[0]["content"] += "\n" + cu_system_supplement
             else:
-                openai_messages.insert(0, {
-                    "role": Constants.ROLE_SYSTEM,
-                    "content": cu_system_supplement.strip(),
-                })
+                openai_messages.insert(
+                    0,
+                    {
+                        "role": Constants.ROLE_SYSTEM,
+                        "content": cu_system_supplement.strip(),
+                    },
+                )
 
         openai_tools = []
         for idx, tool in enumerate(claude_request.tools):
@@ -329,7 +341,7 @@ def convert_claude_user_message(msg: ClaudeMessage, *, allow_images: bool) -> Di
     """Convert Claude user message to OpenAI format."""
     if msg.content is None:
         return {"role": Constants.ROLE_USER, "content": ""}
-    
+
     if isinstance(msg.content, str):
         return {"role": Constants.ROLE_USER, "content": msg.content}
 
@@ -348,15 +360,15 @@ def convert_claude_user_message(msg: ClaudeMessage, *, allow_images: bool) -> Di
         # Text blocks
         if block_type == Constants.CONTENT_TEXT:
             text_value = (
-                block.get("text")
-                if isinstance(block, dict)
-                else getattr(block, "text", "")
+                block.get("text") if isinstance(block, dict) else getattr(block, "text", "")
             )
             text_blocks.append(text_value or "")
 
         # Base64 image blocks (Claude style)
         elif block_type == Constants.CONTENT_IMAGE and allow_images:
-            source = block.get("source") if isinstance(block, dict) else getattr(block, "source", {})
+            source = (
+                block.get("source") if isinstance(block, dict) else getattr(block, "source", {})
+            )
             if (
                 isinstance(source, dict)
                 and source.get("type") == "base64"
@@ -418,16 +430,14 @@ def convert_claude_user_message(msg: ClaudeMessage, *, allow_images: bool) -> Di
         return {"role": Constants.ROLE_USER, "content": openai_content}
 
 
-def convert_claude_assistant_message(
-    msg: ClaudeMessage, *, allow_tools: bool
-) -> Dict[str, Any]:
+def convert_claude_assistant_message(msg: ClaudeMessage, *, allow_tools: bool) -> Dict[str, Any]:
     """Convert Claude assistant message to OpenAI format."""
     text_parts = []
     tool_calls = []
 
     if msg.content is None:
         return {"role": Constants.ROLE_ASSISTANT, "content": None}
-    
+
     if isinstance(msg.content, str):
         return {"role": Constants.ROLE_ASSISTANT, "content": msg.content}
 
