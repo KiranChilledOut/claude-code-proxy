@@ -64,12 +64,15 @@ def _count_tokens_text(text: str) -> int:
     return int(math.ceil(len(text) / 4 * 1.35))
 
 
-def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
+def _estimate_prompt_tokens(
+    messages: List[Dict[str, Any]], *, include_safety_buffer: bool = True
+) -> int:
     """Estimate total prompt tokens using tiktoken (or char-based fallback).
 
     Accounts for text content, image tokens, and tool call arguments.
     Adds per-message overhead (role tokens, separators) consistent with
-    the OpenAI chat format.
+    the OpenAI chat format. Context-window guard rails include a safety
+    buffer; observability estimates should disable it to avoid inflating cost.
     """
     total_tokens = 0
     image_bonus = 0
@@ -96,7 +99,9 @@ def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
                 total_tokens += _count_tokens_text(fn.get("name", ""))
                 total_tokens += _count_tokens_text(fn.get("arguments", ""))
 
-    total_tokens += image_bonus + TOKEN_ESTIMATE_BUFFER
+    total_tokens += image_bonus
+    if include_safety_buffer:
+        total_tokens += TOKEN_ESTIMATE_BUFFER
     return total_tokens
 
 

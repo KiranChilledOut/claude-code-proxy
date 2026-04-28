@@ -232,12 +232,13 @@ function renderRequests() {
         <td><code>${escapeHtml(row.claude_model)}</code></td>
         <td><code>${escapeHtml(row.backend_model)}</code></td>
         <td>${fmtInt(Number(row.input_tokens || 0) + Number(row.output_tokens || 0))}</td>
+        <td><span class="pill">${escapeHtml(row.usage_source || "provider")}</span></td>
         <td>${fmtMoney(row.estimated_cost, row.currency || "USD")}</td>
         <td>${fmtMs(row.latency_ms)}</td>
         <td>${fmtInt(row.tool_call_count)}</td>
       </tr>
     `).join("")
-    : `<tr><td class="empty" colspan="8">No requests yet</td></tr>`;
+    : `<tr><td class="empty" colspan="9">No requests yet</td></tr>`;
 }
 
 function renderFailures() {

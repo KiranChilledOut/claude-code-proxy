@@ -86,6 +86,14 @@ class ObservabilityRecorder:
         output_tokens = _as_int(usage.get("output_tokens"))
         cache_creation = _as_int(usage.get("cache_creation_input_tokens"))
         cache_read = _as_int(usage.get("cache_read_input_tokens"))
+        usage_source = str(
+            usage.get("source")
+            or (
+                "provider"
+                if input_tokens or output_tokens or cache_creation or cache_read
+                else "missing"
+            )
+        )
         pricing = self.pricing_catalog.quote(backend_model, input_tokens, output_tokens)
         observed_tok_s = None
         if output_tokens > 0 and latency_ms > 0:
@@ -110,6 +118,7 @@ class ObservabilityRecorder:
                 "output_tokens": output_tokens,
                 "cache_creation_input_tokens": cache_creation,
                 "cache_read_input_tokens": cache_read,
+                "usage_source": usage_source,
                 "total_tokens": input_tokens + output_tokens,
                 "input_cost": pricing["input_cost"],
                 "output_cost": pricing["output_cost"],
@@ -301,6 +310,7 @@ class ObservabilityRecorder:
                     output_tokens INTEGER NOT NULL DEFAULT 0,
                     cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
                     cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+                    usage_source TEXT NOT NULL DEFAULT 'provider',
                     total_tokens INTEGER NOT NULL DEFAULT 0,
                     input_cost REAL,
                     output_cost REAL,
@@ -313,6 +323,12 @@ class ObservabilityRecorder:
                     tool_call_count INTEGER NOT NULL DEFAULT 0
                 )
                 """
+            )
+            self._ensure_column(
+                conn,
+                "requests",
+                "usage_source",
+                "TEXT NOT NULL DEFAULT 'provider'",
             )
             conn.execute(
                 """
@@ -346,7 +362,7 @@ class ObservabilityRecorder:
                         request_id, started_at, started_at_unix, completed_at, base_url,
                         claude_model, backend_model, stream, status, http_status,
                         stop_reason, latency_ms, input_tokens, output_tokens,
-                        cache_creation_input_tokens, cache_read_input_tokens, total_tokens,
+                        cache_creation_input_tokens, cache_read_input_tokens, usage_source, total_tokens,
                         input_cost, output_cost, estimated_cost, currency,
                         advertised_tok_s, observed_tok_s, error_type, error_message,
                         tool_call_count
@@ -354,7 +370,7 @@ class ObservabilityRecorder:
                         :request_id, :started_at, :started_at_unix, :completed_at, :base_url,
                         :claude_model, :backend_model, :stream, :status, :http_status,
                         :stop_reason, :latency_ms, :input_tokens, :output_tokens,
-                        :cache_creation_input_tokens, :cache_read_input_tokens, :total_tokens,
+                        :cache_creation_input_tokens, :cache_read_input_tokens, :usage_source, :total_tokens,
                         :input_cost, :output_cost, :estimated_cost, :currency,
                         :advertised_tok_s, :observed_tok_s, :error_type, :error_message,
                         :tool_call_count
@@ -375,6 +391,13 @@ class ObservabilityRecorder:
                         """,
                         tool_call,
                     )
+
+    def _ensure_column(
+        self, conn: sqlite3.Connection, table: str, column: str, definition: str
+    ) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _fetch_rows(self, query: str, params: tuple) -> List[Dict[str, Any]]:
         if not self.enabled or not Path(self.db_path).exists():

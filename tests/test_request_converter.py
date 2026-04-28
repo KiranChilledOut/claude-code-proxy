@@ -3,7 +3,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.conversion.request_converter import convert_claude_to_openai
+from src.conversion.request_converter import (
+    TOKEN_ESTIMATE_BUFFER,
+    _estimate_prompt_tokens,
+    convert_claude_to_openai,
+)
 from src.core.config import config
 from src.core.model_manager import model_manager
 from src.models.claude import (
@@ -56,6 +60,15 @@ def test_text_request_does_not_force_tool_choice_without_tools():
 
     assert "tool_choice" not in openai_request
     assert "tools" not in openai_request
+
+
+def test_prompt_token_estimate_can_disable_context_safety_buffer():
+    messages = [{"role": "user", "content": "hello"}]
+
+    with_buffer = _estimate_prompt_tokens(messages)
+    without_buffer = _estimate_prompt_tokens(messages, include_safety_buffer=False)
+
+    assert with_buffer - without_buffer == TOKEN_ESTIMATE_BUFFER
 
 
 def test_image_request_drops_tools_and_sets_none():

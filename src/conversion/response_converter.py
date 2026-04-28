@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import HTTPException, Request
 
+from src.conversion.request_converter import _count_tokens_text
 from src.core.constants import Constants
 from src.models.claude import ClaudeMessagesRequest
 
@@ -433,6 +434,7 @@ async def convert_openai_streaming_to_claude_with_cancellation(
         "cache_creation_input_tokens": 0,
         "cache_read_input_tokens": 0,
     }
+    estimated_output_tokens = 0
     observed_tool_calls = []
     started_blocks = []  # track indices of blocks we've started (for Fix 4)
     stopped_blocks = set()  # track indices already stopped (avoid double-stop)
@@ -678,6 +680,7 @@ async def convert_openai_streaming_to_claude_with_cancellation(
 
             # --- Handle text delta (with thinking support) ---
             if delta and "content" in delta and delta["content"] is not None:
+                estimated_output_tokens += _count_tokens_text(delta["content"])
                 async for event in _process_text_fragment(delta["content"]):
                     yield event
 
@@ -806,6 +809,9 @@ async def convert_openai_streaming_to_claude_with_cancellation(
                             f"{sanitized[:200]}"
                         )
                     if tc_data["started"]:
+                        estimated_output_tokens += _count_tokens_text(
+                            f"{tc_data['name']} {sanitized or tc_data['args_buffer'] or '{}'}"
+                        )
                         observed_tool_calls.append(
                             {
                                 "tool_id": tc_data["id"],
@@ -821,6 +827,7 @@ async def convert_openai_streaming_to_claude_with_cancellation(
                 if observability_context is not None:
                     observability_context["stop_reason"] = final_stop_reason
                     observability_context["tool_calls"] = observed_tool_calls
+                    observability_context["estimated_output_tokens"] = estimated_output_tokens
                 break
 
     except HTTPException as e:
@@ -919,6 +926,7 @@ async def convert_openai_streaming_to_claude_with_cancellation(
         observability_context["usage"] = usage_data
         observability_context["stop_reason"] = final_stop_reason
         observability_context["tool_calls"] = observed_tool_calls
+        observability_context["estimated_output_tokens"] = estimated_output_tokens
 
 
 # ---------------------------------------------------------------------------

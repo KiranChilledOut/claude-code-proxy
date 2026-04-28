@@ -8,7 +8,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.conversion.request_converter import _count_tokens_text, convert_claude_to_openai
+from src.conversion.request_converter import (
+    _count_tokens_text,
+    _estimate_prompt_tokens,
+    convert_claude_to_openai,
+)
 from src.conversion.response_converter import (
     convert_openai_streaming_to_claude_with_cancellation,
     convert_openai_to_claude_response,
@@ -54,6 +58,35 @@ def _extract_tool_calls_from_claude_response(claude_response: dict) -> list:
             }
         )
     return tool_calls
+
+
+def _has_token_usage(usage: Optional[dict]) -> bool:
+    if not usage:
+        return False
+    return any(
+        int(usage.get(key) or 0) > 0
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    )
+
+
+def _stream_usage_with_fallback(stream_metrics: dict, estimated_input_tokens: int) -> dict:
+    usage = dict(stream_metrics.get("usage") or {})
+    if _has_token_usage(usage):
+        usage.setdefault("source", "provider")
+        return usage
+
+    return {
+        "input_tokens": estimated_input_tokens,
+        "output_tokens": int(stream_metrics.get("estimated_output_tokens") or 0),
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "source": "estimated",
+    }
 
 
 def _record_message_observability(
@@ -144,6 +177,9 @@ async def create_message(
         # Convert Claude request to OpenAI format
         openai_request = convert_claude_to_openai(request, model_manager)
         backend_model = openai_request.get("model")
+        estimated_input_tokens = _estimate_prompt_tokens(
+            openai_request.get("messages", []), include_safety_buffer=False
+        )
 
         # Check if client disconnected before processing
         if await http_request.is_disconnected():
@@ -193,7 +229,9 @@ async def create_message(
                             stream=True,
                             status=stream_status,
                             http_status=200 if stream_status == "success" else 500,
-                            usage=stream_metrics.get("usage"),
+                            usage=_stream_usage_with_fallback(
+                                stream_metrics, estimated_input_tokens
+                            ),
                             stop_reason=stream_metrics.get("stop_reason"),
                             error_type=stream_metrics.get("error_type"),
                             error_message=stream_error,

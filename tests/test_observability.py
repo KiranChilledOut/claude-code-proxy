@@ -6,6 +6,20 @@ from src.observability.pricing import PricingCatalog
 from src.observability.store import ObservabilityRecorder, utc_now_iso
 
 
+def test_stream_usage_falls_back_to_estimate_when_provider_usage_is_missing():
+    from src.api.endpoints import _stream_usage_with_fallback
+
+    usage = _stream_usage_with_fallback({"usage": {}, "estimated_output_tokens": 12}, 345)
+
+    assert usage == {
+        "input_tokens": 345,
+        "output_tokens": 12,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "source": "estimated",
+    }
+
+
 def test_pricing_catalog_computes_model_cost():
     catalog = PricingCatalog(
         '{"zai-org/GLM-4.7-FP8":{"input_per_1m":0.30,"output_per_1m":1.20,"advertised_tok_s":36.8}}'
@@ -45,7 +59,7 @@ async def test_observability_recorder_persists_request_and_tool_call(tmp_path):
         status="success",
         http_status=200,
         latency_ms=1000,
-        usage={"input_tokens": 1000, "output_tokens": 500},
+        usage={"input_tokens": 1000, "output_tokens": 500, "source": "estimated"},
         stop_reason="tool_use",
         tool_calls=[
             {
@@ -67,6 +81,7 @@ async def test_observability_recorder_persists_request_and_tool_call(tmp_path):
     assert requests[0]["estimated_cost"] == pytest.approx(0.0015)
     assert requests[0]["observed_tok_s"] == pytest.approx(500)
     assert requests[0]["tool_call_count"] == 1
+    assert requests[0]["usage_source"] == "estimated"
 
     assert len(tool_calls) == 1
     assert tool_calls[0]["tool_name"] == "bash"
