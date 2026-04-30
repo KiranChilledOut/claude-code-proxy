@@ -101,8 +101,23 @@ uv run claude-code-proxy-nebius
 
 ### Use with Claude Code
 
+Claude Code talks to the proxy via two environment variables:
+`ANTHROPIC_BASE_URL` (where to send requests) and `ANTHROPIC_API_KEY`
+(by default, the proxy ignores the client key and accepts any non-empty
+string).
+
+To wire this up permanently, add the following to your shell rc
+(`~/.zshrc` or `~/.bashrc`), then open a new terminal:
+
 ```bash
-ANTHROPIC_BASE_URL="http://localhost:8083" ANTHROPIC_API_KEY="any-value" claude
+export ANTHROPIC_BASE_URL=http://localhost:8083
+export ANTHROPIC_API_KEY=claude-local
+```
+
+Or run as a one-off, prefixing the env vars on the command line:
+
+```bash
+ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude
 ```
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
