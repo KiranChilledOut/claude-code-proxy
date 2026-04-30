@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent that keeps claude-code-proxy running on macOS.
+
+  Install:
+    1. Replace REPO_ROOT below with the absolute path to your clone, e.g.
+       /Users/you/src/claude-code-proxy
+    2. cp contrib/claude-code-proxy.plist.example \
+         ~/Library/LaunchAgents/com.user.claude-code-proxy.plist
+    3. launchctl load ~/Library/LaunchAgents/com.user.claude-code-proxy.plist
+
+  Stop / unload:
+    launchctl unload ~/Library/LaunchAgents/com.user.claude-code-proxy.plist
+
+  Logs:
+    tail -f /tmp/claude-code-proxy.log
+
+  This is a user-level LaunchAgent (runs at login, dies at logout). Use
+  /Library/LaunchDaemons + sudo if you need a system-wide variant.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.claude-code-proxy</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPO_ROOT/.venv/bin/python</string>
+    <string>REPO_ROOT/start_proxy.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>REPO_ROOT</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/claude-code-proxy.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/claude-code-proxy.log</string>
+</dict>
+</plist>
