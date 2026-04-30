@@ -87,6 +87,31 @@ VISION_MODEL="Qwen/Qwen2.5-VL-72B-Instruct"
 STRIP_IMAGE_CONTEXT="true"
 ```
 
+#### Reasoning models
+
+Several Nebius-hosted models emit *hidden* reasoning tokens before producing
+visible output. These tokens count against `max_tokens`, so very small budgets
+can return empty content. Known reasoning-style models on Nebius:
+
+- `moonshotai/Kimi-K2.5`
+- `deepseek-ai/DeepSeek-V3.2`
+- `zai-org/GLM-5`
+- `Qwen/Qwen3-Next-80B-A3B-Thinking`
+- `Qwen/Qwen3-235B-A22B-Thinking-2507-fast`
+
+Implication: keep `MAX_TOKENS_LIMIT` and per-request `max_tokens` generous
+(>=4096 is recommended; 16k+ is safer for agentic tool-use loops). If a
+reasoning model returns empty text with a non-zero `output_tokens` count, the
+budget was exhausted by reasoning before any visible output was produced —
+raise the limit and retry.
+
+Verify model availability and pick alternatives at:
+
+```bash
+curl -s https://api.tokenfactory.nebius.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY" | jq '.data[].id'
+```
+
 ### Run
 
 ```bash
