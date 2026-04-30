@@ -407,18 +407,41 @@ async def test_connection():
 
     except Exception as e:
         logger.error(f"API connectivity test failed: {e}")
+        msg = str(e)
+        msg_l = msg.lower()
+
+        if "404" in msg or "not found" in msg_l or "does not exist" in msg_l:
+            suggestions = [
+                f"The configured model '{config.small_model}' may not be available on this provider — "
+                f"verify against GET {config.openai_base_url.rstrip('/')}/models",
+                "Check BIG_MODEL, MIDDLE_MODEL, SMALL_MODEL, and VISION_MODEL in your .env",
+                "Token-factory providers like Nebius rotate model availability",
+            ]
+        elif "401" in msg or "403" in msg or "unauthorized" in msg_l or "forbidden" in msg_l:
+            suggestions = [
+                "Check your OPENAI_API_KEY is valid",
+                "Verify your API key has the necessary permissions",
+            ]
+        elif "429" in msg or "rate" in msg_l:
+            suggestions = [
+                "Check if you have reached rate limits",
+                "Wait and retry, or contact your provider about quota",
+            ]
+        else:
+            suggestions = [
+                "Check your OPENAI_API_KEY is valid",
+                "Verify your API key has the necessary permissions",
+                "Check if you have reached rate limits",
+            ]
+
         return JSONResponse(
             status_code=503,
             content={
                 "status": "failed",
                 "error_type": "API Error",
-                "message": str(e),
+                "message": msg,
                 "timestamp": datetime.now().isoformat(),
-                "suggestions": [
-                    "Check your OPENAI_API_KEY is valid",
-                    "Verify your API key has the necessary permissions",
-                    "Check if you have reached rate limits",
-                ],
+                "suggestions": suggestions,
             },
         )
 
