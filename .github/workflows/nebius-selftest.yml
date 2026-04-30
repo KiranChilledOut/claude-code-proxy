@@ -1,0 +1,50 @@
+name: Nebius Selftest
+
+# Exercises a real round trip against Nebius Token Factory via
+# `python start_proxy.py --selftest`. Runs on:
+#   - push to main, so the main branch is always known-functional
+#   - manual dispatch, so a maintainer can re-verify on demand
+#
+# Requires the `NEBIUS_API_KEY` repository secret. PRs from forks do NOT
+# get access to secrets and so cannot run this workflow — those PRs are
+# still covered by Test Matrix (pytest, no API).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify NEBIUS_API_KEY secret is available
+        run: |
+          if [ -z "${{ secrets.NEBIUS_API_KEY }}" ]; then
+            echo "::error::NEBIUS_API_KEY secret is not configured on this repo." \
+                 "Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Run --selftest against Nebius
+        env:
+          OPENAI_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
+          OPENAI_BASE_URL: https://api.tokenfactory.nebius.com/v1
+          BIG_MODEL: moonshotai/Kimi-K2.5
+          MIDDLE_MODEL: moonshotai/Kimi-K2.5
+          SMALL_MODEL: moonshotai/Kimi-K2.5
+          VISION_MODEL: Qwen/Qwen2.5-VL-72B-Instruct
+          OBSERVABILITY_ENABLED: "false"
+        run: python start_proxy.py --selftest
