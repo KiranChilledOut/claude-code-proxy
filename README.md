@@ -147,6 +147,33 @@ ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
+#### Statusline indicator (optional)
+
+Claude Code displays the model *it requested* (e.g. `claude-sonnet-4-5`),
+not the backend model the proxy actually served (e.g. `moonshotai/Kimi-K2.5`),
+so by default there is no in-UI indicator that you're routed through this
+proxy. A custom statusline fixes that. Add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; model=$(grep -m1 '^BIG_MODEL=' /path/to/claude-code-proxy/.env 2>/dev/null | cut -d= -f2-); [ -n \"$model\" ] && echo \"[nebius://$model]\" || echo \"[proxy://$ANTHROPIC_BASE_URL]\""
+  }
+}
+```
+
+Replace `/path/to/claude-code-proxy/.env` with the absolute path to your
+`.env`. Behavior:
+
+- Bare `claude` (no proxy) → statusline is blank, no clutter.
+- Proxy-routed Claude Code → statusline shows e.g. `[nebius://moonshotai/Kimi-K2.5]`.
+- If the `.env` path is unreadable → falls back to `[proxy://<ANTHROPIC_BASE_URL>]`
+  so you still know an interceptor is active.
+
+The command is read at session start, so re-open Claude Code after editing
+`settings.json`.
+
 ## MCP Support
 
 Bundled MCP servers live under `MCP/`.
