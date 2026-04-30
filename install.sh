@@ -152,12 +152,81 @@ To use the proxy, two things need to be running:
   1) The proxy itself, in another terminal:
        cd $REPO_ROOT && .venv/bin/python start_proxy.py
 
-  2) Claude Code wired up to talk to the proxy. Add to your shell rc
-     (~/.zshrc or ~/.bashrc):
+  2) Claude Code wired up to talk to the proxy.
 
-       export ANTHROPIC_BASE_URL=http://localhost:${PORT}
-       export ANTHROPIC_API_KEY=claude-local
-
-     Then open a new shell. Or run as a one-off:
-       ANTHROPIC_BASE_URL=http://localhost:${PORT} ANTHROPIC_API_KEY=claude-local claude
+Wire this up to your shell now?
+  [1] use 'claudius' to route claude through the proxy
+      (bare 'claude' keeps using Anthropic)
+  [2] set global exports so 'claude' uses the proxy
+      (every 'claude' invocation routes through the proxy)
+  [3] skip — I'll do it myself
 MSG
+
+# RC_FILE can be overridden in the environment for testing.
+if [[ -z "${RC_FILE:-}" ]]; then
+  case "${SHELL##*/}" in
+    bash) RC_FILE="$HOME/.bashrc" ;;
+    *)    RC_FILE="$HOME/.zshrc" ;;
+  esac
+fi
+
+SENTINEL_BEGIN="# >>> claude-code-proxy shell wiring >>>"
+SENTINEL_END="# <<< claude-code-proxy shell wiring <<<"
+
+write_to_rc() {
+  if grep -qF "$SENTINEL_BEGIN" "$RC_FILE" 2>/dev/null; then
+    yellow "  $RC_FILE already contains a claude-code-proxy block — leaving it alone."
+    yellow "  Remove the block between '$SENTINEL_BEGIN' and '$SENTINEL_END' to reset."
+    return 1
+  fi
+  printf '\n%s\n%s\n%s\n' "$SENTINEL_BEGIN" "$1" "$SENTINEL_END" >> "$RC_FILE"
+  green "  Appended to $RC_FILE"
+  return 0
+}
+
+printf "\nChoice [1/2/3] (default 3): "
+read -r CHOICE || CHOICE=3
+echo
+
+case "${CHOICE:-3}" in
+  1)
+    snippet="claudius() {
+  ANTHROPIC_BASE_URL=http://localhost:${PORT} ANTHROPIC_API_KEY=claude-local claude \"\$@\"
+}"
+    if write_to_rc "$snippet"; then
+      echo
+      echo "Open a new shell (or 'source $RC_FILE'), then run: claudius"
+    fi
+    ;;
+  2)
+    snippet="export ANTHROPIC_BASE_URL=http://localhost:${PORT}
+export ANTHROPIC_API_KEY=claude-local"
+    if write_to_rc "$snippet"; then
+      echo
+      echo "Open a new shell (or 'source $RC_FILE'), then run: claude"
+    fi
+    ;;
+  *)
+    cat <<MSG
+Skipped. Append ONE of these to $RC_FILE manually:
+
+  Option A — separate command (claudius):
+
+    claudius() {
+      ANTHROPIC_BASE_URL=http://localhost:${PORT} ANTHROPIC_API_KEY=claude-local claude "\$@"
+    }
+
+  Option B — global exports:
+
+    export ANTHROPIC_BASE_URL=http://localhost:${PORT}
+    export ANTHROPIC_API_KEY=claude-local
+
+  Option A keeps the provider visible in the command name. Option B
+  is more convenient if you mostly use Claude Code through Nebius.
+
+To remove later: delete the block between
+  '$SENTINEL_BEGIN' and '$SENTINEL_END'
+in your shell rc.
+MSG
+    ;;
+esac
