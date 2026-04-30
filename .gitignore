@@ -120,6 +120,9 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 
+# claude-code-proxy daemon state
+.proxy.pid
+
 # SageMath parsed files
 *.sage.py
 
