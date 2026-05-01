@@ -139,8 +139,7 @@ export ANTHROPIC_API_KEY=claude-local
 ```
 
 Option A keeps the provider visible in the command name. Option B is
-fewer keystrokes per invocation. The bundled `install.sh` can write
-either snippet for you at the end of install.
+fewer keystrokes per invocation.
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
