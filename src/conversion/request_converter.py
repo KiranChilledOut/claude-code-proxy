@@ -232,6 +232,7 @@ def count_claude_request_tokens(claude_request) -> int:
                         total += _count_tokens_text(bcontent)
                     elif isinstance(bcontent, list):
                         for item in bcontent:
+                            # Handle dict, string, or pydantic model objects
                             if isinstance(item, dict):
                                 if item.get("type") == "text":
                                     total += _count_tokens_text(item.get("text", ""))
@@ -244,6 +245,18 @@ def count_claude_request_tokens(claude_request) -> int:
                                         total += _count_tokens_text(str(item))
                             elif isinstance(item, str):
                                 total += _count_tokens_text(item)
+                            else:
+                                # Pydantic model object — extract text field or serialize
+                                item_text = getattr(item, "text", None)
+                                if item_text:
+                                    total += _count_tokens_text(item_text)
+                                else:
+                                    try:
+                                        total += _count_tokens_text(
+                                            json.dumps(item, ensure_ascii=False)
+                                        )
+                                    except (TypeError, ValueError):
+                                        total += _count_tokens_text(str(item))
                     elif isinstance(bcontent, dict):
                         try:
                             total += _count_tokens_text(
@@ -251,6 +264,28 @@ def count_claude_request_tokens(claude_request) -> int:
                             )
                         except (TypeError, ValueError):
                             total += _count_tokens_text(str(bcontent))
+                    else:
+                        # Pydantic model object (e.g., ClaudeContentBlockToolResult)
+                        bcontent_text = getattr(bcontent, "content", None)
+                        if bcontent_text:
+                            if isinstance(bcontent_text, str):
+                                total += _count_tokens_text(bcontent_text)
+                            elif isinstance(bcontent_text, list):
+                                for sub_item in bcontent_text:
+                                    if isinstance(sub_item, str):
+                                        total += _count_tokens_text(sub_item)
+                                    elif isinstance(sub_item, dict):
+                                        try:
+                                            total += _count_tokens_text(
+                                                json.dumps(sub_item, ensure_ascii=False)
+                                            )
+                                        except (TypeError, ValueError):
+                                            total += _count_tokens_text(str(sub_item))
+                                    else:
+                                        # Pydantic model
+                                        sub_text = getattr(sub_item, "text", None)
+                                        if sub_text:
+                                            total += _count_tokens_text(sub_text)
 
     # ---- tools (the part the old estimator dropped on the floor) ----
     tools = getattr(claude_request, "tools", None)
