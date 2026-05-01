@@ -90,6 +90,11 @@ TOKEN_ESTIMATE_BUFFER = 512
 
 
 def _get_context_limit(model_name: str) -> int:
+    """Get the context limit for a given model name.
+
+    Checks config for model-specific context limit overrides (big, middle,
+    small, vision). Falls back to DEFAULT_CONTEXT_LIMIT if no override.
+    """
     # Per-role overrides from config
     if model_name == config.big_model and config.big_model_context_limit:
         return config.big_model_context_limit

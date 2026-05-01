@@ -78,6 +78,11 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _map_finish_reason(finish_reason: Optional[str]) -> str:
+    """Map OpenAI finish reason to Claude stop reason constants.
+
+    Translates 'stop', 'length', 'tool_calls', 'function_call' to their
+    Claude equivalents (end_turn, max_tokens, tool_use).
+    """
     return {
         "stop": Constants.STOP_END_TURN,
         "length": Constants.STOP_MAX_TOKENS,
