@@ -28,7 +28,11 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Claude-to-OpenAI API Proxy v1.0.0")
         print("")
-        print("Usage: python start_proxy.py")
+        print("Usage: python start_proxy.py [--help|--selftest]")
+        print("")
+        print("  --selftest   Hit /test-connection in-process and exit 0 if it")
+        print("               succeeds, non-zero otherwise. Intended for CI and")
+        print("               install scripts.")
         print("")
         print("Required environment variables:")
         print("  OPENAI_API_KEY - Your provider API key")
@@ -62,6 +66,31 @@ def main():
         print(f"  Claude opus models -> {config.big_model}")
         print(f"  Requests with images -> {config.vision_model}")
         sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        # In-process smoke test: invoke /test-connection via Starlette's
+        # TestClient (no uvicorn, no port binding) and exit 0/1 based on
+        # the result. We deliberately don't enter TestClient as a context
+        # manager so FastAPI lifespan handlers (which would open the
+        # observability sqlite database) do not fire.
+        import json
+
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        response = client.get("/test-connection")
+        try:
+            result = response.json()
+        except ValueError:
+            print(
+                f"selftest: non-JSON response (status {response.status_code}): "
+                f"{response.text}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        sys.exit(0 if result.get("status") == "success" else 1)
 
     # Configuration summary
     print("🚀 Claude-to-OpenAI API Proxy v1.0.0")
