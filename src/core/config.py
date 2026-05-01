@@ -63,6 +63,15 @@ class Config:
         self.middle_model = os.environ.get("MIDDLE_MODEL", self.big_model)
         self.small_model = os.environ.get("SMALL_MODEL", "zai-org/GLM-4.5")
         self.vision_model = os.environ.get("VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")
+
+        # Aliases for the in-Claude-Code `/model <name>` picker. These let users
+        # type `/model glm`, `/model kimi`, `/model gemma` and have the proxy
+        # route to the right upstream without editing .env. `glm` defaults to
+        # whatever BIG_MODEL is so a Nebius-only deployment works out of the box.
+        self.glm_model = os.environ.get("GLM_MODEL", self.big_model)
+        self.kimi_model = os.environ.get("KIMI_MODEL", "moonshotai/Kimi-K2-Instruct")
+        self.gemma_model = os.environ.get("GEMMA_MODEL", "google/gemma-3-27b-it")
+
         self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
             "1",
             "true",

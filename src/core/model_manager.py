@@ -2,9 +2,24 @@ from src.core.config import config
 from src.models.claude import ClaudeMessage
 
 
+def _build_alias_map(cfg) -> dict:
+    """Map the short aliases users can type into Claude Code's /model picker
+    (e.g. `/model glm`) to the upstream model strings we forward to the
+    OpenAI-compatible endpoint."""
+    return {
+        "opus": cfg.big_model,
+        "sonnet": cfg.middle_model,
+        "haiku": cfg.small_model,
+        "glm": cfg.glm_model,
+        "kimi": cfg.kimi_model,
+        "gemma": cfg.gemma_model,
+    }
+
+
 class ModelManager:
     def __init__(self, config):
         self.config = config
+        self.aliases = _build_alias_map(config)
 
     def contains_image_content(self, messages, *, latest_user_only: bool = False) -> bool:
         """Check if any (or just the latest user) message contains image content"""
@@ -55,8 +70,23 @@ class ModelManager:
         ):
             return claude_model
 
-        # Map based on model naming patterns
         model_lower = claude_model.lower()
+
+        # Exact alias (e.g. `/model glm` -> glm_model). The opus/sonnet/haiku
+        # entries here also short-circuit the keyword block below for the
+        # bare-alias case, but keyword matching still handles full ids like
+        # `claude-opus-4-5`.
+        if model_lower in self.aliases:
+            return self.aliases[model_lower]
+
+        # Non-Claude keyword aliases inside a longer string (e.g. `glm-5`,
+        # `kimi-2.5`). Checked before the haiku/sonnet/opus block so a
+        # provider keyword wins over the generic fallback.
+        for keyword in ("glm", "kimi", "gemma"):
+            if keyword in model_lower:
+                return self.aliases[keyword]
+
+        # Map based on model naming patterns
         if "haiku" in model_lower:
             return self.config.small_model
         elif "sonnet" in model_lower:

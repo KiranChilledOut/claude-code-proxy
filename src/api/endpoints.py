@@ -634,6 +634,28 @@ async def list_models(_: None = Depends(validate_api_key)):
                     }
                 )
 
+    # Short aliases for Claude Code's /model picker (e.g. `/model glm`).
+    # ModelManager resolves these to the upstream model strings; here we
+    # just surface them in the listing so they appear in the picker.
+    alias_entries = [
+        ("glm", config.glm_model, "GLM (proxied alias)"),
+        ("kimi", config.kimi_model, "Kimi (proxied alias)"),
+        ("gemma", config.gemma_model, "Gemma (proxied alias)"),
+    ]
+    for alias_id, backend, display in alias_entries:
+        if alias_id not in seen:
+            seen.add(alias_id)
+            model_entries.append(
+                {
+                    "id": alias_id,
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "anthropic-proxy",
+                    "display_name": display,
+                    "backend_model": backend,
+                }
+            )
+
     # Also include any custom model configurations from env
     if config.big_model:
         custom_models = [

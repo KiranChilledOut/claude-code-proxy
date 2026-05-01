@@ -49,6 +49,21 @@ SMALL_MODEL=zai-org/GLM-4.5
 VISION_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
 ```
 
+### `/model` aliases
+
+Inside Claude Code, users can type `/model <alias>` to switch upstream models without restarting the proxy or editing `.env`. `ModelManager` resolves the alias on each request, so the choice is stateless from the proxy's perspective.
+
+| Alias | Default upstream | Override env var |
+| --- | --- | --- |
+| `opus` | `BIG_MODEL` | (use `BIG_MODEL`) |
+| `sonnet` | `MIDDLE_MODEL` | (use `MIDDLE_MODEL`) |
+| `haiku` | `SMALL_MODEL` | (use `SMALL_MODEL`) |
+| `glm` | `BIG_MODEL` | `GLM_MODEL` |
+| `kimi` | `moonshotai/Kimi-K2-Instruct` | `KIMI_MODEL` |
+| `gemma` | `google/gemma-3-27b-it` | `GEMMA_MODEL` |
+
+Aliases match either as the full model id (e.g. `/model glm`) or as a keyword inside a longer id (e.g. `glm-5`, `claude-opus-4-5`). Native ids that begin with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim and bypass the alias table.
+
 ## Request Lifecycle
 
 1. Claude Code sends a Claude-compatible request to `/v1/messages`.
