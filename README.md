@@ -40,6 +40,11 @@ claude-code-proxy/
 - Schema-less Claude Code tool conversion
 - Image-aware routing to a vision model
 - Bundled MCP support with repo-relative launchers
+- Deterministic prefix-cache discipline for vLLM/SGLang KV reuse on Nebius
+- Anthropic-compatible `/v1/messages/count_tokens` (counts tools too)
+- Pair-aware context auto-truncation (never orphans tool_results)
+- Tool-call JSON repair (trailing commas, unescaped newlines) and duplicate
+  tool-call dedup for open models — always on, no configuration needed
 
 ## Quick Start
 
@@ -158,7 +163,7 @@ proxy. A custom statusline fixes that. Add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; model=$(grep -m1 '^BIG_MODEL=' /path/to/claude-code-proxy/.env 2>/dev/null | cut -d= -f2-); [ -n \"$model\" ] && echo \"[nebius://$model]\" || echo \"[proxy://$ANTHROPIC_BASE_URL]\""
+    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; env_file=\"/Users/kiran/Desktop/git/claude-code-proxy/.env\"; model=$(grep -m1 '^BIG_MODEL=' \"$env_file\" 2>/dev/null | cut -d= -f2-); obs=$(grep -m1 '^OBSERVABILITY_ENABLED=' \"$env_file\" 2>/dev/null | cut -d= -f2-); port=$(grep -m1 '^PORT=' \"$env_file\" 2>/dev/null | cut -d= -f2-); port=${port:-8083}; if [ \"$obs\" = \"true\" ] && [ -n \"$model\" ]; then echo \"[nebius://$model] http://localhost:$port/dashboard\"; elif [ -n \"$model\" ]; then echo \"[nebius://$model]\"; else echo \"[proxy://$ANTHROPIC_BASE_URL]\"; fi"
   }
 }
 ```
@@ -167,7 +172,8 @@ Replace `/path/to/claude-code-proxy/.env` with the absolute path to your
 `.env`. Behavior:
 
 - Bare `claude` (no proxy) → statusline is blank, no clutter.
-- Proxy-routed Claude Code → statusline shows e.g. `[nebius://moonshotai/Kimi-K2.5]`.
+- Proxy-routed + observability enabled → statusline shows e.g. `[nebius://MiniMax-M2.5] http://localhost:8083/dashboard`.
+- Proxy-routed + observability disabled → statusline shows e.g. `[nebius://MiniMax-M2.5]`.
 - If the `.env` path is unreadable → falls back to `[proxy://<ANTHROPIC_BASE_URL>]`
   so you still know an interceptor is active.
 

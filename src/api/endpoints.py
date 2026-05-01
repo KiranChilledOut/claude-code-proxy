@@ -12,6 +12,7 @@ from src.conversion.request_converter import (
     _count_tokens_text,
     _estimate_prompt_tokens,
     convert_claude_to_openai,
+    count_claude_request_tokens,
 )
 from src.conversion.response_converter import (
     convert_openai_streaming_to_claude_with_cancellation,
@@ -331,39 +332,16 @@ async def create_message(
 
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(request: ClaudeTokenCountRequest, _: None = Depends(validate_api_key)):
+    """Anthropic-compatible token-counting endpoint.
+
+    Returns {"input_tokens": N} matching the shape Claude Code expects.
+    Counts system + every message (text / image / tool_use / tool_result)
+    + every tool definition, including schema-less computer/bash/text_editor
+    tools. Tool definitions are the largest part of most Claude Code
+    requests — the prior implementation silently omitted them.
+    """
     try:
-        # Token counting using tiktoken (cl100k_base) when available,
-        # falling back to char-based estimation otherwise.
-
-        total_tokens = 0
-
-        # Count system message tokens
-        if request.system:
-            if isinstance(request.system, str):
-                total_tokens += _count_tokens_text(request.system)
-            elif isinstance(request.system, list):
-                for block in request.system:
-                    if hasattr(block, "text"):
-                        total_tokens += _count_tokens_text(block.text)
-
-        # Count message tokens
-        for msg in request.messages:
-            total_tokens += 4  # per-message overhead
-            if msg.content is None:
-                continue
-            elif isinstance(msg.content, str):
-                total_tokens += _count_tokens_text(msg.content)
-            elif isinstance(msg.content, list):
-                for block in msg.content:
-                    if hasattr(block, "text") and block.text is not None:
-                        total_tokens += _count_tokens_text(block.text)
-                    elif hasattr(block, "type") and block.type == "image":
-                        total_tokens += 400  # conservative image estimate
-
-        estimated_tokens = max(1, total_tokens)
-
-        return {"input_tokens": estimated_tokens}
-
+        return {"input_tokens": count_claude_request_tokens(request)}
     except Exception as e:
         logger.error(f"Error counting tokens: {e}")
         raise HTTPException(status_code=500, detail=str(e))
