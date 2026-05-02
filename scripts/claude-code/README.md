@@ -6,8 +6,13 @@ Typing `/models` renders a 30-entry combined list (curated shortcuts + any live 
 
 ## Files
 
-- **`models.md`** — the slash command body. Pinned to `model: glm` so the command itself runs on a model capable enough to follow tool-use instructions, regardless of what's currently selected.
-- **`_models_helper.py`** — single-purpose Python script that does the catalog rendering and the `settings.local.json` write. Hardcodes 30 shortcuts so the picker works even if the proxy is unreachable; still pulls `/v1/models` to surface anything Nebius adds that's not in the hardcoded list.
+- **`models.md`** — the slash command body. Includes the 30-entry catalog as static text the model copies verbatim into its reply (so the picker doesn't get hidden behind Claude Code's bash-output collapse). Pinned to `model: glm` so the command itself runs on a model capable enough to follow tool-use instructions, regardless of what's currently selected.
+- **`_models_helper.py`** — companion script. Subcommands:
+  - `set <id-or-number>` — writes the choice to `~/.claude/settings.local.json`. Resolves numbers (1-30), short names, and full ids.
+  - `extras` — fetches `/v1/models` and prints any upstream ids that aren't in the hardcoded list. Empty when the catalog matches.
+  - `list` — combined hardcoded + live listing (kept for `_models_helper.py` standalone use; not used by the slash command itself, which uses static text from `models.md`).
+
+The catalog appears in **both** files: `models.md` has it as static markdown for display (model can't hallucinate a verbatim copy of its own prompt), and `_models_helper.py` has it as `HARDCODED_SHORTCUTS` for `set` lookup. They must stay in sync — edit both at the same time when Nebius rotates a model id.
 
 ## Install
 
@@ -40,4 +45,4 @@ For helper-only shortcuts (`qwen-32`, `qwen-235`, `kimi-fast`, etc.) the proxy's
 
 ## Updating the catalog
 
-Nebius rotates model availability. When an id changes, edit `_models_helper.py`'s `HARDCODED_SHORTCUTS` list — no proxy restart needed. The next `/models` invocation picks up the change.
+Nebius rotates model availability. When an id changes, edit **both** the static catalog in `models.md` and the `HARDCODED_SHORTCUTS` list in `_models_helper.py` (keep them in sync — the picker reads the static block, but `set <number>` resolves via the helper). No proxy restart needed; the next `/models` invocation picks up the change.

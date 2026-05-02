@@ -172,13 +172,24 @@ def cmd_set(value):
     print(f"settings.local.json updated: model = {write_value}")
 
 
+def cmd_extras():
+    """Print only the live catalog ids that aren't already represented by a
+    hardcoded shortcut, one per line, no decoration. Empty output if the
+    proxy is unreachable or there are no extras."""
+    catalog = fetch_catalog_quietly()
+    for full in live_extras(catalog):
+        print(full)
+
+
 def main():
     if len(sys.argv) < 2:
-        print("usage: _models_helper.py {list | set <id-or-number>}", file=sys.stderr)
+        print("usage: _models_helper.py {list | extras | set <id-or-number>}", file=sys.stderr)
         sys.exit(1)
     cmd = sys.argv[1]
     if cmd == "list":
         cmd_list()
+    elif cmd == "extras":
+        cmd_extras()
     elif cmd == "set":
         if len(sys.argv) < 3:
             print("usage: _models_helper.py set <id-or-number>", file=sys.stderr)
