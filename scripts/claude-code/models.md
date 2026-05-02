@@ -27,11 +27,11 @@ If the helper exits non-zero, report what it printed and stop.
    python3 ~/.claude/commands/_models_helper.py list
    ```
 
-   Show the user the helper's stdout verbatim (it's already formatted as a numbered list with shortcuts on top, then the Token Factory catalog with `(aka ...)` annotations).
+   Claude Code displays the helper's stdout as the bash tool output (it may be collapsed with a `ctrl+o to expand` hint — that's fine). **Do not re-print the list in your text response.** Re-typing it both clutters the screen and risks transcription errors that mislead the user when they pick by id.
 
    If the helper printed `PROXY_UNREACHABLE` on stderr, stop and tell the user the proxy isn't running on `$ANTHROPIC_BASE_URL` (default `http://localhost:8083`); they need to start it from `~/Documents/claude-nebius/proxy`.
 
-2. Ask the user, in one line: `Type a number or paste any model id.`
+2. Reply with exactly this single line and nothing else: `Type a number or paste a model id (ctrl+o to expand the list above).`
 
 3. When the user replies, run exactly:
 
