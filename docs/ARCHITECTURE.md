@@ -61,8 +61,23 @@ Inside Claude Code, users can type `/model <alias>` to switch upstream models wi
 | `glm` | `zai-org/GLM-5` | `GLM_MODEL` |
 | `kimi` | `moonshotai/Kimi-K2.5` | `KIMI_MODEL` |
 | `gemma` | `google/gemma-3-27b-it` | `GEMMA_MODEL` |
+| `qwen` | `Qwen/Qwen3.5-397B-A17B` | `QWEN_MODEL` |
+| `nemotron` | `nvidia/Llama-3_1-Nemotron-Ultra-253B-v1` | `NEMOTRON_MODEL` |
+| `super` | `nvidia/nemotron-3-super-120b-a12b` | `NEMOTRON_SUPER_MODEL` |
+| `nano` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | `NEMOTRON_NANO_MODEL` |
+| `minimax` | `MiniMaxAI/MiniMax-M2.5` | `MINIMAX_MODEL` |
+| `hermes` | `NousResearch/Hermes-4-405B` | `HERMES_MODEL` |
+| `gpt` | `openai/gpt-oss-120b` | `GPT_MODEL` |
+| `llama` | `meta-llama/Meta-Llama-3.1-8B-Instruct` | `LLAMA_MODEL` |
 
-Aliases match either as the full model id (e.g. `/model glm`) or as a keyword inside a longer id (e.g. `glm-5`, `claude-opus-4-5`). Native ids that begin with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim and bypass the alias table.
+Resolution rules in order:
+
+1. **Native passthrough.** Ids beginning with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim.
+2. **Slash-passthrough.** Ids containing a `/` (Token Factory / HF-style, e.g. `meta-llama/Llama-3.3-70B-Instruct`) pass through verbatim. This lets users pick any catalog entry directly.
+3. **Exact alias match.** Lookup in the table above.
+4. **Keyword match** (legacy, only for `glm` / `kimi` / `gemma`) — `glm-5`, `kimi-2.5`, etc. resolve via the alias.
+5. **Claude family keyword** — `haiku` / `sonnet` / `opus` substring → `SMALL` / `MIDDLE` / `BIG_MODEL`.
+6. **Fallback** → `BIG_MODEL`.
 
 ### Picker contents (`/v1/models`)
 

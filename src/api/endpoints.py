@@ -586,6 +586,14 @@ async def list_models(_: None = Depends(validate_api_key)):
         ("glm", config.glm_model, "GLM (proxied alias)"),
         ("kimi", config.kimi_model, "Kimi (proxied alias)"),
         ("gemma", config.gemma_model, "Gemma (proxied alias)"),
+        ("qwen", config.qwen_model, "Qwen (proxied alias)"),
+        ("nemotron", config.nemotron_model, "Nemotron Ultra (proxied alias)"),
+        ("super", config.nemotron_super_model, "Nemotron Super (proxied alias)"),
+        ("nano", config.nemotron_nano_model, "Nemotron Nano (proxied alias)"),
+        ("minimax", config.minimax_model, "MiniMax (proxied alias)"),
+        ("hermes", config.hermes_model, "Hermes (proxied alias)"),
+        ("gpt", config.gpt_model, "GPT-OSS (proxied alias)"),
+        ("llama", config.llama_model, "Llama (proxied alias)"),
     ]
     for alias_id, backend, display in alias_entries:
         if alias_id not in seen:

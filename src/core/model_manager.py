@@ -13,6 +13,14 @@ def _build_alias_map(cfg) -> dict:
         "glm": cfg.glm_model,
         "kimi": cfg.kimi_model,
         "gemma": cfg.gemma_model,
+        "qwen": cfg.qwen_model,
+        "nemotron": cfg.nemotron_model,
+        "super": cfg.nemotron_super_model,
+        "nano": cfg.nemotron_nano_model,
+        "minimax": cfg.minimax_model,
+        "hermes": cfg.hermes_model,
+        "gpt": cfg.gpt_model,
+        "llama": cfg.llama_model,
     }
 
 
@@ -68,6 +76,13 @@ class ModelManager:
             or claude_model.startswith("doubao-")
             or claude_model.startswith("deepseek-")
         ):
+            return claude_model
+
+        # Token Factory / HF-style ids contain a "/" (e.g.
+        # "meta-llama/Llama-3.3-70B-Instruct"). Pass them through verbatim so
+        # users can pick any catalog entry directly without falling back to
+        # BIG_MODEL.
+        if "/" in claude_model:
             return claude_model
 
         model_lower = claude_model.lower()
