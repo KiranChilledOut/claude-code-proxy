@@ -52,16 +52,31 @@ claude-code-proxy/
 
 ### Install
 
-Using `uv`:
+The fastest path is the bundled installer, which creates a virtualenv,
+installs runtime dependencies, prompts for your Nebius API key without
+echoing it to your shell, validates the configured model IDs against
+`GET /v1/models`, and runs an end-to-end smoke test before declaring
+success:
+
+```bash
+./install.sh
+```
+
+#### Manual install
+
+If you'd rather wire things up yourself:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install --upgrade pip   # fresh venvs ship pip <22 which fails on pyproject editable installs
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env                            # then edit .env to set OPENAI_API_KEY
+```
+
+Or with `uv`:
 
 ```bash
 uv sync
-```
-
-Using `pip`:
-
-```bash
-python -m pip install -e ".[dev]"
 ```
 
 ### Configure
@@ -106,19 +121,38 @@ Claude Code talks to the proxy via two environment variables:
 (by default, the proxy ignores the client key and accepts any non-empty
 string).
 
-To wire this up permanently, add the following to your shell rc
-(`~/.zshrc` or `~/.bashrc`), then open a new terminal:
+There are two natural ways to wire this up. Pick one and append it to
+your shell rc (`~/.zshrc` or `~/.bashrc`), then open a new terminal.
+
+#### Option A — `claudius` wrapper function
+
+A shell function that prefixes the env vars only when you call it. Bare
+`claude` keeps using Anthropic's API.
+
+```bash
+claudius() {
+  ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude "$@"
+}
+```
+
+Then run: `claudius`
+
+#### Option B — global exports
+
+Every `claude` invocation routes through the proxy.
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8083
 export ANTHROPIC_API_KEY=claude-local
 ```
 
-Or run as a one-off, prefixing the env vars on the command line:
+Then run: `claude`
 
-```bash
-ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude
-```
+Option A keeps the provider visible in the command name. Option B is
+more convenient if you mostly use Claude Code through Nebius.
+
+The bundled `install.sh` can write either snippet for you at the end of
+install.
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
