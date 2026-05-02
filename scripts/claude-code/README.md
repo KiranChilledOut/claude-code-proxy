@@ -6,13 +6,15 @@ Typing `/models` renders a 30-entry combined list (curated shortcuts + any live 
 
 ## Files
 
-- **`models.md`** — the slash command body. Includes the 30-entry catalog as static text the model copies verbatim into its reply (so the picker doesn't get hidden behind Claude Code's bash-output collapse). Pinned to `model: glm` so the command itself runs on a model capable enough to follow tool-use instructions, regardless of what's currently selected.
+- **`models.md`** — the slash command body. Pinned to `model: glm` so the command itself runs on a model capable enough to follow tool-use instructions, regardless of what's currently selected. Tells the model to call `_models_helper.py list` and NOT to retype the bash output (see "Why bash output, not model text" below).
 - **`_models_helper.py`** — companion script. Subcommands:
+  - `list` — print the full numbered catalog (hardcoded shortcuts + any live extras) to stdout. The slash command runs this; Claude Code displays it as bash output (collapsed past ~3 lines with a `ctrl+o to expand` hint).
   - `set <id-or-number>` — writes the choice to `~/.claude/settings.local.json`. Resolves numbers (1-30), short names, and full ids.
-  - `extras` — fetches `/v1/models` and prints any upstream ids that aren't in the hardcoded list. Empty when the catalog matches.
-  - `list` — combined hardcoded + live listing (kept for `_models_helper.py` standalone use; not used by the slash command itself, which uses static text from `models.md`).
+  - `extras` — fetches `/v1/models` and prints only the upstream ids that aren't in the hardcoded list, one per line. Empty when the hardcoded list covers everything.
 
-The catalog appears in **both** files: `models.md` has it as static markdown for display (model can't hallucinate a verbatim copy of its own prompt), and `_models_helper.py` has it as `HARDCODED_SHORTCUTS` for `set` lookup. They must stay in sync — edit both at the same time when Nebius rotates a model id.
+## Why bash output, not model text
+
+Earlier iterations had the slash command body include the 30-entry catalog as static markdown so the model could "copy it verbatim." In practice even capable models (GLM-5, Kimi-K2.5) leaked memorized ids from training — `Kimi-K2.5` got rendered as `Kimi-K2`, `GLM-5` as `GLM-4.5`, `Qwen3-235B-A22B-Instruct-2507` as `…-2505`, etc. Picking by id from the model's text would have set the wrong model. Bash output is the only display that's guaranteed accurate, so the slash command uses it and accepts the collapse.
 
 ## Install
 
@@ -45,4 +47,4 @@ For helper-only shortcuts (`qwen-32`, `qwen-235`, `kimi-fast`, etc.) the proxy's
 
 ## Updating the catalog
 
-Nebius rotates model availability. When an id changes, edit **both** the static catalog in `models.md` and the `HARDCODED_SHORTCUTS` list in `_models_helper.py` (keep them in sync — the picker reads the static block, but `set <number>` resolves via the helper). No proxy restart needed; the next `/models` invocation picks up the change.
+Nebius rotates model availability. When an id changes, edit `_models_helper.py`'s `HARDCODED_SHORTCUTS` list — single source of truth, no proxy restart needed. The next `/models` invocation picks up the change.
