@@ -73,7 +73,7 @@ class Config:
         # type `/model glm`, `/model kimi`, `/model gemma` and have the proxy
         # route to the right upstream without editing .env. `glm` defaults to
         # whatever BIG_MODEL is so a Nebius-only deployment works out of the box.
-        self.glm_model = os.environ.get("GLM_MODEL", self.big_model)
+        self.glm_model = os.environ.get("GLM_MODEL", "zai-org/GLM-5")
         self.kimi_model = os.environ.get("KIMI_MODEL", "moonshotai/Kimi-K2.5")
         self.gemma_model = os.environ.get("GEMMA_MODEL", "google/gemma-3-27b-it")
 

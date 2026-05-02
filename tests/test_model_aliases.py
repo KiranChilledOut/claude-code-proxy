@@ -3,24 +3,24 @@ from src.core.model_manager import ModelManager
 
 
 def test_alias_exact_match_routes_to_provider_model(monkeypatch):
-    monkeypatch.setattr(config, "glm_model", "zai-org/GLM-4.5")
+    monkeypatch.setattr(config, "glm_model", "zai-org/GLM-5")
     monkeypatch.setattr(config, "kimi_model", "moonshotai/Kimi-K2.5")
     monkeypatch.setattr(config, "gemma_model", "google/gemma-3-27b-it")
     mm = ModelManager(config)
 
-    assert mm.map_claude_model_to_openai("glm") == "zai-org/GLM-4.5"
+    assert mm.map_claude_model_to_openai("glm") == "zai-org/GLM-5"
     assert mm.map_claude_model_to_openai("kimi") == "moonshotai/Kimi-K2.5"
     assert mm.map_claude_model_to_openai("gemma") == "google/gemma-3-27b-it"
 
 
 def test_alias_keyword_in_longer_id(monkeypatch):
-    monkeypatch.setattr(config, "glm_model", "zai-org/GLM-4.5")
+    monkeypatch.setattr(config, "glm_model", "zai-org/GLM-5")
     monkeypatch.setattr(config, "kimi_model", "moonshotai/Kimi-K2.5")
     monkeypatch.setattr(config, "gemma_model", "google/gemma-3-27b-it")
     mm = ModelManager(config)
 
-    assert mm.map_claude_model_to_openai("glm-5") == "zai-org/GLM-4.5"
-    assert mm.map_claude_model_to_openai("Glm-Beta") == "zai-org/GLM-4.5"
+    assert mm.map_claude_model_to_openai("glm-5") == "zai-org/GLM-5"
+    assert mm.map_claude_model_to_openai("Glm-Beta") == "zai-org/GLM-5"
     assert mm.map_claude_model_to_openai("kimi-2.5") == "moonshotai/Kimi-K2.5"
 
 

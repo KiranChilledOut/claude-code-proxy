@@ -58,7 +58,7 @@ Inside Claude Code, users can type `/model <alias>` to switch upstream models wi
 | `opus` | `BIG_MODEL` | (use `BIG_MODEL`) |
 | `sonnet` | `MIDDLE_MODEL` | (use `MIDDLE_MODEL`) |
 | `haiku` | `SMALL_MODEL` | (use `SMALL_MODEL`) |
-| `glm` | `BIG_MODEL` | `GLM_MODEL` |
+| `glm` | `zai-org/GLM-5` | `GLM_MODEL` |
 | `kimi` | `moonshotai/Kimi-K2.5` | `KIMI_MODEL` |
 | `gemma` | `google/gemma-3-27b-it` | `GEMMA_MODEL` |
 
