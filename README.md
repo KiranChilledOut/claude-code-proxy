@@ -180,6 +180,24 @@ Replace `/path/to/claude-code-proxy/.env` with the absolute path to your
 The command is read at session start, so re-open Claude Code after editing
 `settings.json`.
 
+#### Model picker (optional)
+
+Claude Code's built-in `/model` picker is hardcoded to four Anthropic
+entries; it doesn't enumerate the proxy's `/v1/models` catalog. A
+bundled custom slash command, `/models`, gives you an actual picker
+across the full Token Factory catalog (30+ curated shortcuts plus any
+live extras Nebius adds later). Install:
+
+```bash
+mkdir -p ~/.claude/commands
+cp scripts/claude-code/models.md          ~/.claude/commands/
+cp scripts/claude-code/_models_helper.py  ~/.claude/commands/
+chmod +x ~/.claude/commands/_models_helper.py
+```
+
+Restart Claude Code, then `/models`. See `scripts/claude-code/README.md`
+for details on shortcut → upstream-id mapping.
+
 ## MCP Support
 
 Bundled MCP servers live under `MCP/`.

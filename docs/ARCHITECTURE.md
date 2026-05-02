@@ -97,6 +97,8 @@ The picker is hardcoded inside the Claude Code binary — items 1–4 are always
 
 To use any catalog id, type it directly: `/model meta-llama/Llama-3.3-70B-Instruct`. Claude Code accepts arbitrary `--model` strings and forwards them verbatim, and the proxy routes by id (slash-passthrough for `provider/model` shapes; alias map for short names; catalog ids fall through to the existing routing rules).
 
+For an actual picker UX over the full catalog, install the bundled `/models` custom slash command from `scripts/claude-code/` (see `scripts/claude-code/README.md`). It shows a 30-entry combined list (curated shortcuts + any live catalog extras) and writes the choice to `~/.claude/settings.local.json`.
+
 ## Request Lifecycle
 
 1. Claude Code sends a Claude-compatible request to `/v1/messages`.
