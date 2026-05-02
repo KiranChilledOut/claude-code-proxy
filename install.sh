@@ -216,22 +216,28 @@ else
     case "${response:-y}" in
         [Yy]|"")
             if [[ -n "$SHELL_RC" ]]; then
-                printf '\n# Claude Shell Function — enables claude, claude --proxy, and claudius\n' >> "$SHELL_RC"
-                printf 'claude() {\n' >> "$SHELL_RC"
-                printf '    local proxy_url="http://localhost:${PORT:-8083}"\n\n' >> "$SHELL_RC"
-                printf '    if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then\n' >> "$SHELL_RC"
-                printf '        printf "\\033[38;5;129m▐▛▜▌ Claude via Proxy\\033[0m  \\033[38;5;244m→ API key auth via local proxy\\033[0m\\n"\n' >> "$SHELL_RC"
-                printf '        ANTHROPIC_AUTH_TOKEN="tokenfactory" \\\n' >> "$SHELL_RC"
-                printf '        ANTHROPIC_API_KEY="dummy" \\\n' >> "$SHELL_RC"
-                printf '        ANTHROPIC_BASE_URL="$proxy_url" \\\n' >> "$SHELL_RC"
-                printf '        command claude "${@:2}"\n' >> "$SHELL_RC"
-                printf '    else\n' >> "$SHELL_RC"
-                printf '        printf "\\033[38;5;46m▐▛▜▌ Claude Direct\\033[0m  \\033[38;5;244m→ subscription login auth\\033[0m\\n"\n' >> "$SHELL_RC"
-                printf '        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \\\n' >> "$SHELL_RC"
-                printf '        command claude "$@"\n' >> "$SHELL_RC"
-                printf '    fi\n}\n\n' >> "$SHELL_RC"
-                printf '# Alias for users who prefer claudius style\n' >> "$SHELL_RC"
-                printf "alias claudius='claude --proxy'\n" >> "$SHELL_RC"
+                cat >> "$SHELL_RC" <<'SHELL_FUNC'
+
+# Claude Shell Function — enables claude, claude --proxy, and claudius
+claude() {
+    local proxy_url="http://localhost:${PORT:-8083}"
+
+    if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then
+        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
+        ANTHROPIC_AUTH_TOKEN="tokenfactory" \
+        ANTHROPIC_API_KEY="dummy" \
+        ANTHROPIC_BASE_URL="$proxy_url" \
+        command claude "${@:2}"
+    else
+        printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
+        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+        command claude "$@"
+    fi
+}
+
+# Alias for users who prefer claudius style
+alias claudius='claude --proxy'
+SHELL_FUNC
                 green "Added to $SHELL_RC"
                 yellow "Run: source $SHELL_RC"
             else

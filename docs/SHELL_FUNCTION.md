@@ -49,7 +49,7 @@ Then restart your shell or run: `source ~/.zshrc` (or `~/.bashrc`)
 
 When you run a command, you'll see a colored indicator:
 
-- **Cyan** (`▐▛▜▌ Claude Direct`) = Direct subscription connection
+- **Green** (`▐▛▜▌ Claude Direct`) = Direct subscription connection
 - **Purple** (`▐▛▜▌ Claude via Proxy`) = Local proxy connection (Nebius)
 
 ## Troubleshooting
