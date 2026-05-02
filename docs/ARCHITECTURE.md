@@ -74,6 +74,12 @@ Aliases match either as the full model id (e.g. `/model glm`) or as a keyword in
 
 Earlier versions of this listing carried hardcoded `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*` entries that all silently routed to `BIG_MODEL`. Those have been removed because they were misleading; a follow-up PR will reintroduce curated `opus` / `sonnet` / `haiku` entries that actually forward to api.anthropic.com.
 
+#### What Claude Code's `/model` picker actually shows
+
+The picker is hardcoded inside the Claude Code binary — items 1–4 are always Default/Sonnet/Sonnet (1M)/Haiku from Anthropic, and the proxy can't replace them. Claude Code consults `/v1/models` only to label the *currently-selected* custom model (it shows up as item 5 once selected). The full Token Factory catalog returned by `/v1/models` is therefore aimed at SDK clients and at making the alias resolution discoverable; it is not enumerated in the picker UI.
+
+To use any catalog id, type it directly: `/model meta-llama/Llama-3.3-70B-Instruct`. Claude Code accepts arbitrary `--model` strings and forwards them verbatim, and the proxy routes by id (slash-passthrough for `provider/model` shapes; alias map for short names; catalog ids fall through to the existing routing rules).
+
 ## Request Lifecycle
 
 1. Claude Code sends a Claude-compatible request to `/v1/messages`.
