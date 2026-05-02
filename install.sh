@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # install.sh — bootstrap claude-code-proxy against a live Nebius account.
+#
+# Implements lessons learned from real installs:
+#   - pip <22 in a fresh venv can't do editable installs → upgrade pip first
+#   - the bundled .env.example pins models that Nebius has retired → validate
+#     configured model IDs against /v1/models before declaring success
+#   - "server bound to :8083" is not the same as "request succeeds" → smoke
+#     test /test-connection and exit non-zero if it fails
+#   - prompting for the API key with `read -rs` keeps it out of shell history
 
 set -euo pipefail
 
@@ -19,21 +27,6 @@ green()  { printf "${C_GREEN}✔${C_RESET} %s\n" "$*"; }
 yellow() { printf "${C_YELLOW}⚠${C_RESET} %s\n" "$*"; }
 info()   { printf "${C_BLUE}▸${C_RESET} %s\n" "$*"; }
 step()   { printf "${C_ICYAN}▐▛▜▌${C_RESET} ${C_BOLD}%s${C_RESET}\n" "$*"; }
-
-# Banner
-banner() {
-    cat <<'EOF'
-╭──────────────────────────────────────────────────────────────────╮
-│                                                                  │
-│   ${C_ICYAN}▐▛▜▌${C_RESET}  ${C_BOLD}Claude Code Proxy for Nebius${C_RESET}                              │
-│                                                                  │
-│   Install with style. Connect with ease.                         │
-│                                                                  │
-╰──────────────────────────────────────────────────────────────────╯
-EOF
-    # Apply colors after heredoc
-    printf "${C_ICYAN}▐▛▜▌${C_RESET}  ${C_BOLD}Claude Code Proxy for Nebius${C_RESET}\n\n"
-}
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
@@ -66,7 +59,7 @@ step "Installing dependencies"
 green "dependencies installed"
 
 if [[ -f .env ]]; then
-  yellow ".env already exists —/edit manually to change keys or models"
+  yellow ".env already exists — edit manually to change keys or models"
 else
   step "Creating .env"
   cp .env.example .env
@@ -216,22 +209,27 @@ else
     case "${response:-y}" in
         [Yy]|"")
             if [[ -n "$SHELL_RC" ]]; then
-                cat >> "$SHELL_RC" <<'SHELL_FUNC'
+                # Backup before appending
+                cp "$SHELL_RC" "$SHELL_RC.bak.$(date +%s)"
+                green "Backed up $SHELL_RC"
+
+                # Use resolved PORT to avoid foot-gun with env variable collisions
+                cat >> "$SHELL_RC" <<SHELL_FUNC
 
 # Claude Shell Function — enables claude, claude --proxy, and claudius
 claude() {
-    local proxy_url="http://localhost:${PORT:-8083}"
+    local proxy_url="http://localhost:${PORT}"
 
-    if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then
+    if [[ "\$1" == "--proxy" ]]; then
         printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
-        ANTHROPIC_AUTH_TOKEN="tokenfactory" \
-        ANTHROPIC_API_KEY="dummy" \
-        ANTHROPIC_BASE_URL="$proxy_url" \
-        command claude "${@:2}"
+        ANTHROPIC_AUTH_TOKEN="tokenfactory" \\
+        ANTHROPIC_API_KEY="dummy" \\
+        ANTHROPIC_BASE_URL="\$proxy_url" \\
+        command claude "\${@:2}"
     else
         printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
-        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-        command claude "$@"
+        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \\
+        command claude "\$@"
     fi
 }
 

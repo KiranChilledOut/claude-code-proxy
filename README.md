@@ -154,43 +154,11 @@ If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
 ### Quick Switch: `claude`, `claude --proxy`, and `claudius`
 
-This project includes a shell function that lets you switch between direct (subscription) and proxy (Nebius) connections with a single command. Add this to your shell rc (`~/.zshrc` or `~/.bashrc`):
+This project includes a shell function that lets you switch between direct (subscription) and proxy (Nebius) connections with a single command.
 
-```bash
-# Claude Shell Function — enables claude, claude --proxy, and claudius
-claude() {
-    local proxy_url="http://localhost:${PORT:-8083}"
-
-    if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then
-        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
-        ANTHROPIC_AUTH_TOKEN="tokenfactory" \
-        ANTHROPIC_API_KEY="dummy" \
-        ANTHROPIC_BASE_URL="$proxy_url" \
-        command claude "${@:2}"
-    else
-        printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
-        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-        command claude "$@"
-    fi
-}
-
-# Alias for users who prefer claudius style
-alias claudius='claude --proxy'
-```
-
-Then restart your shell or run `source ~/.zshrc`.
-
-**Usage:**
-
-| Command | Description |
-|---------|-------------|
-| `claude` | Direct connection (subscription login) |
-| `claude --proxy` | Connect via local proxy (Nebius API) |
-| `claudius` | Alias for `claude --proxy` |
+See [docs/SHELL_FUNCTION.md](./docs/SHELL_FUNCTION.md) for the full function code and usage guide.
 
 The install script (`./install.sh`) can automatically configure this for you — just say yes when prompted.
-
-See [docs/SHELL_FUNCTION.md](./docs/SHELL_FUNCTION.md) for detailed documentation.
 
 #### Statusline indicator (optional)
 
