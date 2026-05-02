@@ -24,7 +24,21 @@ import os
 import sys
 import urllib.request
 
-SETTINGS_PATH = os.path.expanduser("~/.claude/settings.local.json")
+def settings_path() -> str:
+    """Where to write the model selection.
+
+    If CLAUDE_CODE_PROXY_DIR is set (typically by the claudius shell
+    wrapper), write project-scoped settings under that dir so model
+    picks don't leak into bare-claude sessions elsewhere on the machine.
+    Falls back to ~/.claude/settings.local.json (user-level) when the
+    env var isn't set, preserving the old behavior.
+    """
+    proxy_dir = os.environ.get("CLAUDE_CODE_PROXY_DIR")
+    if proxy_dir:
+        claude_dir = os.path.join(os.path.expanduser(proxy_dir), ".claude")
+        os.makedirs(claude_dir, exist_ok=True)
+        return os.path.join(claude_dir, "settings.local.json")
+    return os.path.expanduser("~/.claude/settings.local.json")
 
 # Curated shortname -> full upstream id, in display order. Each entry must
 # point at an id that's actually live on Nebius's Token Factory; if a name
@@ -160,13 +174,13 @@ def cmd_set(value):
         write_value = value
 
     try:
-        with open(SETTINGS_PATH) as f:
+        with open(settings_path()) as f:
             text = f.read()
             settings = json.loads(text) if text.strip() else {}
     except FileNotFoundError:
         settings = {}
     settings["model"] = write_value
-    with open(SETTINGS_PATH, "w") as f:
+    with open(settings_path(), "w") as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
     print(f"settings.local.json updated: model = {write_value}")
