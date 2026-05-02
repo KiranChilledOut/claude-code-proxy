@@ -152,6 +152,14 @@ ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
+### Quick Switch: `claude`, `claude --proxy`, and `claudius`
+
+This project includes a shell function that lets you switch between direct (subscription) and proxy (Nebius) connections with a single command.
+
+See [docs/SHELL_FUNCTION.md](./docs/SHELL_FUNCTION.md) for the full function code and usage guide.
+
+The install script (`./install.sh`) can automatically configure this for you — just say yes when prompted.
+
 #### Statusline indicator (optional)
 
 Claude Code displays the model *it requested* (e.g. `claude-sonnet-4-5`),
