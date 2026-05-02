@@ -117,8 +117,68 @@ each request, so the choice is stateless from the proxy's perspective.
 You can also paste any full Token Factory id (`meta-llama/Llama-3.3-70B-Instruct`,
 `Qwen/Qwen3-32B`, etc.) — anything containing `/` passes through verbatim.
 
-For an in-Claude-Code picker over the full catalog, see
-[Model picker (optional)](#model-picker-optional) below.
+Example session:
+
+```text
+❯ /model glm
+  ⎿  Set model to glm
+
+❯ /model qwen
+  ⎿  Set model to qwen
+
+❯ /model kimi
+  ⎿  Set model to kimi
+
+❯ /model hermes
+  ⎿  Set model to hermes
+
+❯ /model deepseek
+  ⎿  Set model to deepseek
+
+❯ /model minimax
+  ⎿  Set model to minimax
+```
+
+For an in-Claude-Code picker over the full catalog, install the bundled
+`/models` slash command (see [Model picker (optional)](#model-picker-optional)
+below). It prints the numbered catalog of curated shortcuts plus any live
+extras Nebius adds:
+
+```text
+❯ /models
+
+⏺ Bash(python3 ~/.claude/commands/_models_helper.py list)
+  ⎿    [ 1] glm             -> zai-org/GLM-5
+       [ 2] kimi            -> moonshotai/Kimi-K2.5
+       [ 3] qwen            -> Qwen/Qwen3.5-397B-A17B
+       [ 4] nemotron        -> nvidia/Llama-3_1-Nemotron-Ultra-253B-v1
+       [ 5] hermes          -> NousResearch/Hermes-4-405B
+       [ 6] deepseek        -> deepseek-ai/DeepSeek-V3.2
+       [ 7] minimax         -> MiniMaxAI/MiniMax-M2.5
+       [ 8] prime           -> PrimeIntellect/INTELLECT-3
+       [ 9] gpt             -> openai/gpt-oss-120b
+       [10] gemma           -> google/gemma-3-27b-it
+       [11] gemma-tiny      -> google/gemma-2-2b-it
+       [12] llama           -> meta-llama/Meta-Llama-3.1-8B-Instruct
+       [13] llama-big       -> meta-llama/Llama-3.3-70B-Instruct
+       [14] super           -> nvidia/nemotron-3-super-120b-a12b
+       [15] nano            -> nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
+       [16] omni            -> nvidia/Nemotron-3-Nano-Omni
+       [17] hermes-small    -> NousResearch/Hermes-4-70B
+       [18] qwen-235        -> Qwen/Qwen3-235B-A22B-Instruct-2507
+       [19] qwen-235-think  -> Qwen/Qwen3-235B-A22B-Thinking-2507-fast
+       [20] qwen-32         -> Qwen/Qwen3-32B
+       [21] qwen-30         -> Qwen/Qwen3-30B-A3B-Instruct-2507
+       [22] qwen-next       -> Qwen/Qwen3-Next-80B-A3B-Thinking
+       [23] qwen-vl         -> Qwen/Qwen2.5-VL-72B-Instruct
+       [24] qwen-embed      -> Qwen/Qwen3-Embedding-8B
+       [25] kimi-fast       -> moonshotai/Kimi-K2.5-fast
+       [26] qwen-fast       -> Qwen/Qwen3.5-397B-A17B-fast
+       [27] qwen-next-fast  -> Qwen/Qwen3-Next-80B-A3B-Thinking-fast
+       [28] deepseek-fast   -> deepseek-ai/DeepSeek-V3.2-fast
+       [29] gpt-fast        -> openai/gpt-oss-120b-fast
+       [30] minimax-fast    -> MiniMaxAI/MiniMax-M2.5-fast
+```
 
 #### Reasoning models
 
