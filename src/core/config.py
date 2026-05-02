@@ -52,6 +52,11 @@ class Config:
         self.observability_db_path = os.environ.get(
             "OBSERVABILITY_DB_PATH", "observability.sqlite3"
         )
+
+        # /v1/models surfaces the upstream Token Factory catalog via a cached
+        # call. Tune this to taste; default 10 minutes keeps the picker fresh
+        # without hammering Token Factory on every Claude Code session start.
+        self.models_cache_ttl_seconds = int(os.environ.get("MODELS_CACHE_TTL_SECONDS", "600"))
         self.observability_queue_size = int(os.environ.get("OBSERVABILITY_QUEUE_SIZE", "1000"))
         self.observability_store_tool_args = os.environ.get(
             "OBSERVABILITY_STORE_TOOL_ARGS", "false"

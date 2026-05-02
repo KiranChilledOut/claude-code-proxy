@@ -64,6 +64,16 @@ Inside Claude Code, users can type `/model <alias>` to switch upstream models wi
 
 Aliases match either as the full model id (e.g. `/model glm`) or as a keyword inside a longer id (e.g. `glm-5`, `claude-opus-4-5`). Native ids that begin with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim and bypass the alias table.
 
+### Picker contents (`/v1/models`)
+
+`/v1/models` surfaces three groups, in this order:
+
+1. The short aliases above (`glm`, `kimi`, `gemma`).
+2. The full upstream Token Factory catalog, fetched from `{OPENAI_BASE_URL}/v1/models` and cached at module level for `MODELS_CACHE_TTL_SECONDS` (default 600). On upstream error the listing degrades to whatever was cached, or to just the aliases if nothing has been cached yet.
+3. Any extra ids from `BIG_MODEL` / `MIDDLE_MODEL` / `SMALL_MODEL` / `VISION_MODEL` that the upstream catalog didn't already include.
+
+Earlier versions of this listing carried hardcoded `claude-haiku-*`, `claude-sonnet-*`, `claude-opus-*` entries that all silently routed to `BIG_MODEL`. Those have been removed because they were misleading; a follow-up PR will reintroduce curated `opus` / `sonnet` / `haiku` entries that actually forward to api.anthropic.com.
+
 ## Request Lifecycle
 
 1. Claude Code sends a Claude-compatible request to `/v1/messages`.

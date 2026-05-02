@@ -22,6 +22,7 @@ from src.core.client import OpenAIClient
 from src.core.config import config
 from src.core.logging import logger
 from src.core.model_manager import model_manager
+from src.core.tokenfactory_models import get_tokenfactory_models
 from src.models.claude import ClaudeMessagesRequest, ClaudeTokenCountRequest
 from src.observability.store import observability_recorder
 
@@ -565,78 +566,22 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
 
 @router.get("/v1/models")
 async def list_models(_: None = Depends(validate_api_key)):
-    """List available models mapped to Claude model names.
+    """List available models for the Claude Code picker.
 
-        Returns a response shaped like the Anthropic models listing so that
-        Claude Code and other SDK clients can validate connectivity.
-    `
-        Model IDs are dynamically generated to support all current and future
-        Claude models. Routing is handled by pattern matching in ModelManager.
+    Surfaces three groups, in order:
+    1. Short aliases (`glm`, `kimi`, `gemma`) resolved by ModelManager.
+    2. The full upstream Token Factory catalog, fetched dynamically from
+       {OPENAI_BASE_URL}/v1/models and cached for MODELS_CACHE_TTL_SECONDS.
+    3. Any extra ids from the BIG_MODEL/MIDDLE_MODEL/SMALL_MODEL/VISION_MODEL
+       env vars that the upstream catalog didn't already include.
+
+    Fake `claude-*` proxied entries have been removed; real Anthropic routing
+    is handled by a separate follow-up that adds curated `opus`/`sonnet`/
+    `haiku` entries that forward to api.anthropic.com.
     """
-    now = datetime.now().isoformat()
     model_entries = []
     seen = set()
 
-    # Define model tiers with their backend mappings and multiple ID variants
-    # Format: (tier_name, backend_model, model_id_and_display_variants)
-    # The tier_name maps to the pattern in ModelManager (haiku->small, sonnet->middle, opus->big)
-    model_tiers = [
-        {
-            "tier": "haiku",
-            "backend": config.small_model,
-            "variants": [
-                ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 (proxied)"),
-                ("claude-haiku-4-5", "Claude Haiku 4.5 (proxied)"),
-                ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku (proxied)"),
-            ],
-        },
-        {
-            "tier": "sonnet",
-            "backend": config.middle_model,
-            "variants": [
-                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (proxied)"),
-                ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (proxied)"),
-                ("claude-sonnet-4-20250514", "Claude Sonnet 4 (proxied)"),
-                ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet (proxied)"),
-            ],
-        },
-        {
-            "tier": "opus",
-            "backend": config.big_model,
-            "variants": [
-                ("claude-opus-4-7", "Claude Opus 4.7 (proxied)"),
-                ("claude-opus-4-6", "Claude Opus 4.6 (proxied)"),
-                ("claude-opus-4-5-20251101", "Claude Opus 4.5 (proxied)"),
-                ("claude-opus-4-20250514", "Claude Opus 4 (proxied)"),
-            ],
-        },
-        {
-            "tier": "vision",
-            "backend": config.vision_model,
-            "variants": [
-                ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 Vision (proxied)"),
-            ],
-        },
-    ]
-
-    for tier_config in model_tiers:
-        for claude_id, display_name in tier_config["variants"]:
-            if claude_id not in seen:
-                seen.add(claude_id)
-                model_entries.append(
-                    {
-                        "id": claude_id,
-                        "object": "model",
-                        "created": 1700000000,
-                        "owned_by": "anthropic-proxy",
-                        "display_name": display_name,
-                        "backend_model": tier_config["backend"],
-                    }
-                )
-
-    # Short aliases for Claude Code's /model picker (e.g. `/model glm`).
-    # ModelManager resolves these to the upstream model strings; here we
-    # just surface them in the listing so they appear in the picker.
     alias_entries = [
         ("glm", config.glm_model, "GLM (proxied alias)"),
         ("kimi", config.kimi_model, "Kimi (proxied alias)"),
@@ -656,27 +601,44 @@ async def list_models(_: None = Depends(validate_api_key)):
                 }
             )
 
-    # Also include any custom model configurations from env
-    if config.big_model:
-        custom_models = [
-            (config.big_model, "BIG model"),
-            (config.middle_model, "MIDDLE model"),
-            (config.small_model, "SMALL model"),
-            (config.vision_model, "VISION model"),
-        ]
-        for model_id, model_type in custom_models:
-            if model_id and model_id not in seen:
-                seen.add(model_id)
-                model_entries.append(
-                    {
-                        "id": model_id,
-                        "object": "model",
-                        "created": 1700000000,
-                        "owned_by": "anthropic-proxy",
-                        "display_name": f"Custom {model_type} (proxied)",
-                        "backend_model": model_id,
-                    }
-                )
+    upstream_models = await get_tokenfactory_models(
+        openai_client, ttl_seconds=config.models_cache_ttl_seconds
+    )
+    for entry in upstream_models:
+        upstream_id = entry.get("id")
+        if not upstream_id or upstream_id in seen:
+            continue
+        seen.add(upstream_id)
+        model_entries.append(
+            {
+                "id": upstream_id,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": entry.get("owned_by") or "nebius-tokenfactory",
+                "display_name": upstream_id,
+                "backend_model": upstream_id,
+            }
+        )
+
+    custom_models = [
+        (config.big_model, "BIG model"),
+        (config.middle_model, "MIDDLE model"),
+        (config.small_model, "SMALL model"),
+        (config.vision_model, "VISION model"),
+    ]
+    for model_id, model_type in custom_models:
+        if model_id and model_id not in seen:
+            seen.add(model_id)
+            model_entries.append(
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "anthropic-proxy",
+                    "display_name": f"Custom {model_type} (proxied)",
+                    "backend_model": model_id,
+                }
+            )
 
     return {
         "object": "list",
