@@ -1,7 +1,8 @@
+import hashlib
 import json
 import logging
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.conversion.computer_use import (
     convert_schema_less_tools,
@@ -12,6 +13,53 @@ from src.core.constants import Constants
 from src.models.claude import ClaudeMessage, ClaudeMessagesRequest
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Prefix-cache discipline (Tier-1)
+# ---------------------------------------------------------------------------
+# vLLM / SGLang (the engines behind Nebius token-factory deployments) cache
+# the KV state of any *byte-identical* prompt prefix. The proxy maximises
+# cache hits for Claude Code's huge, repeated system + tool block by:
+#   1) emitting tool-parameter JSON Schema with deterministic key ordering, and
+#   2) logging a fingerprint of the cacheable prefix so operators can verify
+#      reuse from logs without inspecting payloads.
+# We do NOT reorder the tools list itself or the messages list — the model
+# would observe those changes and we must not alter request semantics.
+
+
+def _canonicalize_schema(node: Any) -> Any:
+    """Recursively sort dict keys inside a JSON Schema sub-tree.
+
+    JSON Schema does not assign meaning to property ordering, so sorting keys
+    inside `parameters` produces a canonical wire form that gives prefix
+    caches deterministic hits across requests, even when upstream serializers
+    happen to emit keys in different orders.
+    """
+    if isinstance(node, dict):
+        return {k: _canonicalize_schema(node[k]) for k in sorted(node.keys())}
+    if isinstance(node, list):
+        return [_canonicalize_schema(item) for item in node]
+    return node
+
+
+def _compute_prefix_fingerprint(
+    system_message: Optional[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]]
+) -> str:
+    """Return a short sha256 hex digest of the cacheable prefix.
+
+    The prefix here is the system message + the tools list — the part of the
+    request that Claude Code sends nearly identically on every turn. A stable
+    fingerprint across requests in the same session implies the upstream
+    prefix cache will hit. Returns the first 12 hex chars (96 bits) — plenty
+    for collision-resistance in operator logs.
+    """
+    payload = {
+        "system": system_message,
+        "tools": tools or [],
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]
 
 # ---------------------------------------------------------------------------
 # Tiktoken-based token counting (Feature 4)
@@ -42,6 +90,11 @@ TOKEN_ESTIMATE_BUFFER = 512
 
 
 def _get_context_limit(model_name: str) -> int:
+    """Get the context limit for a given model name.
+
+    Checks config for model-specific context limit overrides (big, middle,
+    small, vision). Falls back to DEFAULT_CONTEXT_LIMIT if no override.
+    """
     # Per-role overrides from config
     if model_name == config.big_model and config.big_model_context_limit:
         return config.big_model_context_limit
@@ -105,28 +158,247 @@ def _estimate_prompt_tokens(
     return total_tokens
 
 
+def count_claude_request_tokens(claude_request) -> int:
+    """Count tokens for a Claude-format request (system + messages + tools).
+
+    This is the implementation that backs `POST /v1/messages/count_tokens`.
+    It mirrors how the Claude API itself counts: system, every message
+    (text / image / tool_use / tool_result), and every tool definition
+    (name + description + input_schema). Tools matter a lot in practice —
+    Claude Code's tool block alone is 5–10k tokens, and the previous
+    estimator silently dropped them.
+
+    Returns an integer ≥ 1.
+    """
+    total = 0
+
+    # ---- system ----
+    system = getattr(claude_request, "system", None)
+    if isinstance(system, str):
+        total += _count_tokens_text(system)
+    elif isinstance(system, list):
+        for block in system:
+            text = (
+                block.get("text")
+                if isinstance(block, dict)
+                else getattr(block, "text", None)
+            )
+            if text:
+                total += _count_tokens_text(text)
+
+    # ---- messages ----
+    PER_MESSAGE_OVERHEAD = 4
+    for msg in getattr(claude_request, "messages", []) or []:
+        total += PER_MESSAGE_OVERHEAD
+        content = getattr(msg, "content", None)
+        if content is None:
+            continue
+        if isinstance(content, str):
+            total += _count_tokens_text(content)
+            continue
+        if isinstance(content, list):
+            for block in content:
+                # Resolve type and fields whether block is dict or pydantic model
+                if isinstance(block, dict):
+                    btype = block.get("type")
+                    btext = block.get("text")
+                    bname = block.get("name")
+                    binput = block.get("input")
+                    bcontent = block.get("content")
+                else:
+                    btype = getattr(block, "type", None)
+                    btext = getattr(block, "text", None)
+                    bname = getattr(block, "name", None)
+                    binput = getattr(block, "input", None)
+                    bcontent = getattr(block, "content", None)
+
+                if btype == Constants.CONTENT_TEXT and btext:
+                    total += _count_tokens_text(btext)
+                elif btype == Constants.CONTENT_IMAGE:
+                    total += 400  # conservative per-image estimate
+                elif btype == Constants.CONTENT_TOOL_USE:
+                    # tool name + serialized input
+                    if bname:
+                        total += _count_tokens_text(bname)
+                    if binput is not None:
+                        try:
+                            total += _count_tokens_text(
+                                json.dumps(binput, ensure_ascii=False)
+                            )
+                        except (TypeError, ValueError):
+                            total += _count_tokens_text(str(binput))
+                elif btype == Constants.CONTENT_TOOL_RESULT:
+                    if isinstance(bcontent, str):
+                        total += _count_tokens_text(bcontent)
+                    elif isinstance(bcontent, list):
+                        for item in bcontent:
+                            # Handle dict, string, or pydantic model objects
+                            if isinstance(item, dict):
+                                if item.get("type") == "text":
+                                    total += _count_tokens_text(item.get("text", ""))
+                                else:
+                                    try:
+                                        total += _count_tokens_text(
+                                            json.dumps(item, ensure_ascii=False)
+                                        )
+                                    except (TypeError, ValueError):
+                                        total += _count_tokens_text(str(item))
+                            elif isinstance(item, str):
+                                total += _count_tokens_text(item)
+                            else:
+                                # Pydantic model object — extract text field or serialize
+                                item_text = getattr(item, "text", None)
+                                if item_text:
+                                    total += _count_tokens_text(item_text)
+                                else:
+                                    try:
+                                        total += _count_tokens_text(
+                                            json.dumps(item, ensure_ascii=False)
+                                        )
+                                    except (TypeError, ValueError):
+                                        total += _count_tokens_text(str(item))
+                    elif isinstance(bcontent, dict):
+                        try:
+                            total += _count_tokens_text(
+                                json.dumps(bcontent, ensure_ascii=False)
+                            )
+                        except (TypeError, ValueError):
+                            total += _count_tokens_text(str(bcontent))
+                    else:
+                        # Pydantic model object (e.g., ClaudeContentBlockToolResult)
+                        bcontent_text = getattr(bcontent, "content", None)
+                        if bcontent_text:
+                            if isinstance(bcontent_text, str):
+                                total += _count_tokens_text(bcontent_text)
+                            elif isinstance(bcontent_text, list):
+                                for sub_item in bcontent_text:
+                                    if isinstance(sub_item, str):
+                                        total += _count_tokens_text(sub_item)
+                                    elif isinstance(sub_item, dict):
+                                        try:
+                                            total += _count_tokens_text(
+                                                json.dumps(sub_item, ensure_ascii=False)
+                                            )
+                                        except (TypeError, ValueError):
+                                            total += _count_tokens_text(str(sub_item))
+                                    else:
+                                        # Pydantic model
+                                        sub_text = getattr(sub_item, "text", None)
+                                        if sub_text:
+                                            total += _count_tokens_text(sub_text)
+
+    # ---- tools (the part the old estimator dropped on the floor) ----
+    tools = getattr(claude_request, "tools", None)
+    if tools:
+        # Anthropic's count_tokens charges for tool name, description, and
+        # the full JSON schema. We approximate by serializing the same
+        # function-tool form the proxy emits upstream.
+        for tool in tools:
+            tname = getattr(tool, "name", None) or ""
+            tdesc = getattr(tool, "description", None) or ""
+            tschema = getattr(tool, "input_schema", None)
+            ttype = getattr(tool, "type", None)
+
+            if tname:
+                total += _count_tokens_text(tname)
+            if tdesc:
+                total += _count_tokens_text(tdesc)
+            if tschema:
+                try:
+                    total += _count_tokens_text(json.dumps(tschema, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    total += _count_tokens_text(str(tschema))
+            elif ttype:
+                # Schema-less Anthropic tool (computer/bash/text_editor).
+                # Use the same baked-in schema we'll send to the backend.
+                from src.conversion.computer_use import get_schema_for_tool
+
+                inferred = get_schema_for_tool(tool)
+                if inferred is not None:
+                    total += _count_tokens_text(json.dumps(inferred, ensure_ascii=False))
+
+    return max(total, 1)
+
+
+def _group_messages_by_tool_pair(
+    messages: List[Dict[str, Any]],
+) -> List[List[Dict[str, Any]]]:
+    """Bundle each assistant-with-tool_calls together with its tool replies.
+
+    OpenAI-compatible backends (and Claude itself) reject conversations where
+    a `role=tool` message has no preceding assistant with a matching
+    tool_call_id. To trim safely we treat (assistant + immediately-following
+    tool replies) as one atomic group that can only be dropped together.
+    Every other message is its own group.
+    """
+    groups: List[List[Dict[str, Any]]] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == Constants.ROLE_ASSISTANT and msg.get("tool_calls"):
+            group = [msg]
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == Constants.ROLE_TOOL:
+                group.append(messages[j])
+                j += 1
+            groups.append(group)
+            i = j
+        else:
+            groups.append([msg])
+            i += 1
+    return groups
+
+
 def _trim_messages_to_fit(
     messages: List[Dict[str, Any]], context_limit: int, reserve: int = 2048
 ) -> Tuple[List[Dict[str, Any]], int]:
+    """Drop oldest messages until the prompt fits, preserving tool pairs.
+
+    Rules:
+      * The system message (if any) is always preserved.
+      * The most recent group is always preserved (so the user always sees a
+        response to their latest turn, and any in-flight tool exchange stays
+        intact).
+      * An assistant message with `tool_calls` and its following `role=tool`
+        replies are dropped together — never half-dropped, which would
+        produce an orphan tool_result and a 400 from the backend.
+
+    Returns (trimmed_messages, dropped_count) where dropped_count is the
+    number of *messages* removed (not groups), to keep observability simple.
     """
-    Drop oldest messages until the estimated prompt fits within context_limit - reserve.
-    Returns (trimmed_messages, dropped_count).
-    """
-    trimmed = list(messages)
+    if not messages:
+        return messages, 0
+
+    groups = _group_messages_by_tool_pair(messages)
     dropped = 0
-    while trimmed:
-        est = _estimate_prompt_tokens(trimmed)
+
+    while groups:
+        flat = [m for g in groups for m in g]
+        est = _estimate_prompt_tokens(flat)
         if est <= max(context_limit - reserve, 1):
             break
-        # Prefer to drop the oldest non-system message first; if first is system and list has more, drop second.
-        drop_idx = (
-            0
-            if len(trimmed) == 1
-            else (0 if trimmed[0].get("role") != Constants.ROLE_SYSTEM else 1)
-        )
-        trimmed.pop(drop_idx if drop_idx < len(trimmed) else 0)
-        dropped += 1
-    return trimmed, dropped
+
+        drop_idx = None
+        for k, g in enumerate(groups):
+            # Never drop the most recent group — it's the in-flight turn.
+            if k == len(groups) - 1:
+                continue
+            # Never drop a system message.
+            if any(m.get("role") == Constants.ROLE_SYSTEM for m in g):
+                continue
+            drop_idx = k
+            break
+
+        if drop_idx is None:
+            # Nothing safe left to drop. Bail out and let downstream see
+            # the current size — the upstream may still accept it.
+            break
+
+        dropped += len(groups[drop_idx])
+        groups.pop(drop_idx)
+
+    flat = [m for g in groups for m in g]
+    return flat, dropped
 
 
 def convert_claude_to_openai(
@@ -301,17 +573,30 @@ def convert_claude_to_openai(
                 continue
 
             if cu_converted[idx] is not None:
-                # Schema-less tool already converted to function format
-                openai_tools.append(cu_converted[idx])
+                # Schema-less tool already converted to function format —
+                # canonicalize its parameters so the wire bytes are stable
+                # across requests (prefix-cache discipline).
+                cu_tool = cu_converted[idx]
+                cu_params = cu_tool.get(Constants.TOOL_FUNCTION, {}).get("parameters")
+                if isinstance(cu_params, dict):
+                    cu_tool[Constants.TOOL_FUNCTION]["parameters"] = _canonicalize_schema(
+                        cu_params
+                    )
+                openai_tools.append(cu_tool)
             else:
-                # Standard function tool
+                # Standard function tool. We canonicalize the parameters
+                # schema (key-sort recursively) so that minor reordering
+                # upstream cannot break the Nebius/vLLM prefix cache.
+                # NOTE: We deliberately do NOT sort the outer tools list —
+                # tool order is observable by the model.
+                params = tool.input_schema or {"type": "object", "properties": {}}
                 openai_tools.append(
                     {
                         "type": Constants.TOOL_FUNCTION,
                         Constants.TOOL_FUNCTION: {
                             "name": tool.name,
                             "description": tool.description or "",
-                            "parameters": tool.input_schema or {"type": "object", "properties": {}},
+                            "parameters": _canonicalize_schema(params),
                         },
                     }
                 )
@@ -338,6 +623,16 @@ def convert_claude_to_openai(
     if has_image:
         openai_request.pop("tools", None)
         openai_request["tool_choice"] = "none"
+
+    # --- Prefix-cache fingerprint (Tier-1) ---
+    # Hash only the cacheable prefix: system message + tools. If this digest
+    # stays stable across calls in the same Claude Code session, the
+    # upstream KV cache is being reused.
+    system_msg_for_fp: Optional[Dict[str, Any]] = None
+    if openai_messages and openai_messages[0].get("role") == Constants.ROLE_SYSTEM:
+        system_msg_for_fp = openai_messages[0]
+    fingerprint = _compute_prefix_fingerprint(system_msg_for_fp, openai_request.get("tools"))
+    logger.info(f"prefix_cache_fingerprint={fingerprint} model={openai_model}")
 
     return openai_request
 

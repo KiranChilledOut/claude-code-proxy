@@ -11,40 +11,59 @@
 
 set -euo pipefail
 
-red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
-green()  { printf '\033[32m%s\033[0m\n' "$*"; }
-yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
-info()   { printf '\033[36m==>\033[0m %s\n' "$*"; }
+# Claude-style colors
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_ICYAN='\033[38;5;45m'    # Claude cyan
+C_PURPLE='\033[38;5;129m'  # Claude purple
+C_GREEN='\033[38;5;46m'    # Success green
+C_YELLOW='\033[38;5;220m'  # Warning yellow
+C_RED='\033[38;5;197m'     # Error red
+C_GRAY='\033[38;5;244m'    # Dim gray
+C_BLUE='\033[38;5;75m'     # Info blue
+
+red()    { printf "${C_RED}✘${C_RESET} %s\n" "$*" >&2; }
+green()  { printf "${C_GREEN}✔${C_RESET} %s\n" "$*"; }
+yellow() { printf "${C_YELLOW}⚠${C_RESET} %s\n" "$*"; }
+info()   { printf "${C_BLUE}▸${C_RESET} %s\n" "$*"; }
+step()   { printf "${C_ICYAN}▐▛▜▌${C_RESET} ${C_BOLD}%s${C_RESET}\n" "$*"; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-info "Checking prerequisites"
+# Print banner
+printf "${C_ICYAN}▐▛▜▌${C_RESET}  ${C_BOLD}Claude Code Proxy for Nebius${C_RESET}\n"
+printf "${C_GRAY}Install with style. Connect with ease.${C_RESET}\n\n"
+
+step "Checking prerequisites"
 command -v python3 >/dev/null || { red "python3 not found"; exit 1; }
 command -v curl    >/dev/null || { red "curl not found";    exit 1; }
 
 PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
   || { red "Python >= 3.9 required, found $PY_VER"; exit 1; }
-green "  python3 $PY_VER"
+green "python3 $PY_VER"
 
 if [[ ! -d .venv ]]; then
-  info "Creating .venv"
+  step "Creating virtual environment"
   python3 -m venv .venv
+  green ".venv created"
 fi
 
-info "Upgrading pip in .venv (fresh venvs ship pip <22 which fails on pyproject editable installs)"
+step "Upgrading pip"
 .venv/bin/python -m pip install --quiet --upgrade pip
+green "pip upgraded"
 
-info "Installing dependencies from requirements.txt"
+step "Installing dependencies"
 .venv/bin/pip install --quiet -r requirements.txt
+green "dependencies installed"
 
 if [[ -f .env ]]; then
-  yellow ".env already exists — leaving it alone. Edit it manually to change keys or models."
+  yellow ".env already exists — edit manually to change keys or models"
 else
-  info "Creating .env from .env.example"
+  step "Creating .env"
   cp .env.example .env
-  printf "Paste your Nebius API key (input hidden, press Enter when done): "
+  printf "${C_GRAY}Paste your Nebius API key${C_RESET} ${C_YELLOW}(input hidden, Enter when done)${C_RESET}: "
   read -rs NEBIUS_KEY
   echo
   [[ -n "$NEBIUS_KEY" ]] || { red "No key provided"; exit 1; }
@@ -64,10 +83,10 @@ text = re.sub(
 p.write_text(text)
 PY
   chmod 600 .env
-  green "  wrote .env (mode 600)"
+  green ".env created (mode 600)"
 fi
 
-info "Validating configured models against Nebius /v1/models"
+step "Validating configured models"
 .venv/bin/python <<'PY'
 import json, pathlib, sys, urllib.request
 
@@ -105,11 +124,11 @@ if missing:
     print("  edit .env and re-run install.sh.", file=sys.stderr)
     sys.exit(1)
 
-print(f"  all {len(configured)} configured models are live")
+print(f"  {len(configured)} models validated")
 PY
-green "  models validated"
+green "all models available"
 
-info "Smoke-testing the proxy (boot, /test-connection, shut down)"
+step "Testing proxy connection"
 LOG=$(mktemp -t claude-proxy-smoke.XXXXXX.log)
 .venv/bin/python start_proxy.py >"$LOG" 2>&1 &
 PROXY_PID=$!
@@ -125,8 +144,8 @@ for _ in $(seq 1 30); do
 done
 
 if ! curl -sf -m 2 "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-  red "  proxy did not bind to :${PORT}; first 40 lines of log:"
-  head -40 "$LOG" >&2
+  red "proxy did not bind to :${PORT}"
+  head -20 "$LOG" >&2
   exit 1
 fi
 
@@ -137,27 +156,105 @@ cleanup
 trap - EXIT
 
 if [[ "$STATUS" != "success" ]]; then
-  red "  /test-connection did not return success:"
+  red "connection test failed"
   printf '%s\n' "$RESULT" >&2
   exit 1
 fi
-green "  /test-connection: success"
 
-green ""
-green "Install complete."
-cat <<MSG
+# Success banner
+printf "\n"
+printf "${C_PURPLE}╭───────────────────────────────────────────────────────────${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}  ${C_GREEN}✔${C_RESET} ${C_BOLD}All systems operational${C_RESET}                            ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}                                                            ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}  ${C_ICYAN}▐▛▜▌${C_RESET}  Proxy ready at ${C_YELLOW}http://localhost:${PORT}${C_RESET}                    ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}╰───────────────────────────────────────────────────────────${C_RESET}\n"
+printf "\n"
 
-To use the proxy, two things need to be running:
+# Shell function setup
+printf "${C_PURPLE}╭───────────────────────────────────────────────────────────${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}  ${C_BOLD}Claude Shell Function${C_RESET}                                  ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}                                                            ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}  ${C_GRAY}Quick switch between direct and proxy:${C_RESET}                    ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}                                                            ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}    ${C_GREEN}claude${C_RESET}         → Direct (subscription login)           ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}    ${C_PURPLE}claude --proxy${C_RESET}  → Via local proxy (Nebius)            ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}│${C_RESET}    ${C_PURPLE}claudius${C_RESET}       → Alias for --proxy                    ${C_PURPLE}│${C_RESET}\n"
+printf "${C_PURPLE}╰───────────────────────────────────────────────────────────${C_RESET}\n"
+printf "\n"
 
-  1) The proxy itself, in another terminal:
-       cd $REPO_ROOT && .venv/bin/python start_proxy.py
+# Detect user's default shell profile
+SHELL_RC=""
+user_shell="${SHELL:-/bin/bash}"
+case "$user_shell" in
+    */zsh)
+        SHELL_RC="$HOME/.zshrc"
+        ;;
+    */bash)
+        SHELL_RC="$HOME/.bashrc"
+        ;;
+    *)
+        if [[ -f "$HOME/.zshrc" ]]; then
+            SHELL_RC="$HOME/.zshrc"
+        elif [[ -f "$HOME/.bashrc" ]]; then
+            SHELL_RC="$HOME/.bashrc"
+        fi
+        ;;
+esac
 
-  2) Claude Code wired up to talk to the proxy. Add to your shell rc
-     (~/.zshrc or ~/.bashrc):
+if [[ -f "$SHELL_RC" ]] && grep -q "claude() {" "$SHELL_RC" 2>/dev/null; then
+    yellow "Already configured in $SHELL_RC"
+else
+    printf "${C_GRAY}Add shell function to $SHELL_RC?${C_RESET} [${C_GREEN}Y${C_RESET}/n]: "
+    read -r response
+    case "${response:-y}" in
+        [Yy]|"")
+            if [[ -n "$SHELL_RC" ]]; then
+                # Backup before appending
+                cp "$SHELL_RC" "$SHELL_RC.bak.$(date +%s)"
+                green "Backed up $SHELL_RC"
 
-       export ANTHROPIC_BASE_URL=http://localhost:${PORT}
-       export ANTHROPIC_API_KEY=claude-local
+                # Use resolved PORT to avoid foot-gun with env variable collisions
+                cat >> "$SHELL_RC" <<SHELL_FUNC
 
-     Then open a new shell. Or run as a one-off:
-       ANTHROPIC_BASE_URL=http://localhost:${PORT} ANTHROPIC_API_KEY=claude-local claude
-MSG
+# Claude Shell Function — enables claude, claude --proxy, and claudius
+claude() {
+    local proxy_url="http://localhost:${PORT}"
+
+    if [[ "\$1" == "--proxy" ]]; then
+        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
+        ANTHROPIC_AUTH_TOKEN="tokenfactory" \\
+        ANTHROPIC_API_KEY="dummy" \\
+        ANTHROPIC_BASE_URL="\$proxy_url" \\
+        command claude "\${@:2}"
+    else
+        printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
+        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \\
+        command claude "\$@"
+    fi
+}
+
+# Alias for users who prefer claudius style
+alias claudius='claude --proxy'
+SHELL_FUNC
+                green "Added to $SHELL_RC"
+                yellow "Run: source $SHELL_RC"
+            else
+                red "Could not detect shell profile"
+            fi
+            ;;
+        *)
+            info "Skipped — see docs/SHELL_FUNCTION.md"
+            ;;
+    esac
+fi
+
+printf "\n"
+printf "${C_ICYAN}▐▛▜▌${C_RESET}  ${C_BOLD}Next steps:${C_RESET}\n"
+printf "\n"
+printf "${C_GRAY}1.${C_RESET} Start the proxy:\n"
+printf "      ${C_YELLOW}cd $REPO_ROOT && .venv/bin/python start_proxy.py${C_RESET}\n"
+printf "\n"
+printf "${C_GRAY}2.${C_RESET} Use Claude:\n"
+printf "      ${C_PURPLE}claude --proxy${C_RESET}   # via Nebius proxy\n"
+printf "      ${C_GREEN}claude${C_RESET}            # direct (subscription)\n"
+printf "\n"

@@ -17,6 +17,57 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Tool-call JSON repair (Tier-1)
+# ---------------------------------------------------------------------------
+# Open models often emit tool-call arguments that are *almost* JSON but
+# trip strict parsers: trailing commas, single quotes, control characters
+# inside strings. We attempt a small set of conservative repairs before
+# giving up. We deliberately do NOT pull in a heavyweight JSON5 parser —
+# that would be a behavior change risk for existing Nebius users.
+
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _try_repair_json(raw: str) -> tuple:
+    """Try to coerce a near-JSON string into valid JSON.
+
+    Returns (parsed_obj_or_None, repaired_string). If parsed_obj is None,
+    the string could not be repaired into valid JSON; callers wrap the
+    raw text in `{"raw_arguments": ...}` so the model can re-prompt on
+    the next turn (Claude Code handles this naturally).
+    """
+    if not raw or not raw.strip():
+        return {}, "{}"
+
+    # Fast path: already valid JSON.
+    try:
+        return json.loads(raw), raw
+    except json.JSONDecodeError:
+        pass
+
+    # Repair pass 1: strip trailing commas before } or ]
+    fixed = _TRAILING_COMMA_RE.sub(r"\1", raw)
+    if fixed != raw:
+        try:
+            return json.loads(fixed), fixed
+        except json.JSONDecodeError:
+            pass
+
+    # Repair pass 2: escape literal newlines/tabs inside string values.
+    # We do this only if the un-escaped versions caused the parse to fail —
+    # naive escape would corrupt valid JSON. Heuristic: try replacing only
+    # raw newlines with \n and re-parse.
+    candidate = fixed.replace("\r\n", "\n").replace("\n", "\\n").replace("\t", "\\t")
+    if candidate != fixed:
+        try:
+            return json.loads(candidate), candidate
+        except json.JSONDecodeError:
+            pass
+
+    return None, raw
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -27,6 +78,11 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _map_finish_reason(finish_reason: Optional[str]) -> str:
+    """Map OpenAI finish reason to Claude stop reason constants.
+
+    Translates 'stop', 'length', 'tool_calls', 'function_call' to their
+    Claude equivalents (end_turn, max_tokens, tool_use).
+    """
     return {
         "stop": Constants.STOP_END_TURN,
         "length": Constants.STOP_MAX_TOKENS,
@@ -227,6 +283,23 @@ def _sanitize_tool_arguments(name: str, arguments_str: str) -> tuple:
     return clean_name, clean_args
 
 
+def _finalize_tool_args(name: str, raw_args: str) -> tuple:
+    """Sanitize + JSON-validate tool arguments for the final emit.
+
+    Returns (clean_name, args_json_str, parsed_dict_or_None).
+
+    Pipeline: run the existing sanitizer (XML, embedded args, mangled
+    keys, raw bash strings) and then a small JSON-repair pass for
+    near-JSON survivors (trailing commas, raw newlines). If the bytes
+    still don't parse, parsed_dict is None — callers wrap in
+    `{"raw_arguments": ...}` exactly as the proxy has done historically.
+    Claude Code's natural next-turn re-prompt handles those cases fine.
+    """
+    clean_name, clean_args = _sanitize_tool_arguments(name, raw_args)
+    parsed, repaired = _try_repair_json(clean_args)
+    return clean_name, repaired, parsed
+
+
 def _split_thinking_and_text(text: str):
     """Split text containing <think>…</think> into thinking and text parts.
 
@@ -313,19 +386,37 @@ def convert_openai_to_claude_response(
 
     # Tool calls
     tool_calls = message.get("tool_calls", []) or []
+    seen_signatures = set()  # (name, normalized_args) — used for dedup
     for tool_call in tool_calls:
         if tool_call.get("type") == Constants.TOOL_FUNCTION:
             function_data = tool_call.get(Constants.TOOL_FUNCTION, {})
             raw_name = function_data.get("name", "")
             arguments_str = function_data.get("arguments", "{}")
 
-            # --- Sanitize malformed tool arguments from non-standard models ---
-            actual_name, arguments_str = _sanitize_tool_arguments(raw_name, arguments_str)
+            # --- Sanitize + JSON-repair tool-call arguments ---
+            actual_name, arguments_str, parsed = _finalize_tool_args(raw_name, arguments_str)
 
-            try:
-                arguments = json.loads(arguments_str or "{}")
-            except json.JSONDecodeError:
+            if parsed is not None:
+                arguments = parsed
+            else:
+                # repair mode, unparseable: keep historical fallback shape
                 arguments = {"raw_arguments": arguments_str}
+
+            # Dedup: same (name, args) emitted twice in the same turn is a
+            # known open-model glitch (GLM-4.5 has been seen doing this).
+            try:
+                signature = (
+                    actual_name,
+                    json.dumps(arguments, sort_keys=True, ensure_ascii=False),
+                )
+            except (TypeError, ValueError):
+                signature = (actual_name, str(arguments))
+            if signature in seen_signatures:
+                logger.info(
+                    f"[DEDUP] Dropped duplicate tool_use {actual_name} in same turn"
+                )
+                continue
+            seen_signatures.add(signature)
 
             content_blocks.append(
                 {
@@ -786,13 +877,47 @@ async def convert_openai_streaming_to_claude_with_cancellation(
 
             # Handle finish reason
             if finish_reason:
-                # Flush ALL buffered tool arguments as sanitized JSON
+                # Flush ALL buffered tool arguments as sanitized JSON.
+                # Apply final-args resolution (sanitize → JSON repair) and
+                # dedup duplicate (name, args) tool calls produced in the
+                # same turn.
+                seen_signatures = set()
                 for tc_idx, tc_data in current_tool_calls.items():
-                    sanitized = None
-                    if tc_data["started"] and tc_data["args_buffer"]:
-                        _, sanitized = _sanitize_tool_arguments(
+                    if not tc_data["started"]:
+                        continue
+
+                    has_args = bool(tc_data["args_buffer"])
+                    if has_args:
+                        final_name, sanitized, parsed = _finalize_tool_args(
                             tc_data["name"], tc_data["args_buffer"]
                         )
+                    else:
+                        # No args streamed — preserve prior behavior of not
+                        # emitting a redundant input_json_delta. The
+                        # content_block_start already carried `"input": {}`.
+                        final_name, sanitized, parsed = tc_data["name"], None, None
+
+                    # Build a signature for dedup. If parsing succeeded use
+                    # canonical form; otherwise use the raw sanitized string.
+                    try:
+                        sig = (
+                            final_name,
+                            json.dumps(parsed, sort_keys=True, ensure_ascii=False)
+                            if parsed is not None
+                            else (sanitized or ""),
+                        )
+                    except (TypeError, ValueError):
+                        sig = (final_name, sanitized or "")
+
+                    if sig in seen_signatures:
+                        logger.info(
+                            f"[DEDUP] Dropped duplicate streamed tool_use "
+                            f"{final_name} (idx={tc_data['claude_index']})"
+                        )
+                        continue
+                    seen_signatures.add(sig)
+
+                    if has_args and sanitized is not None:
                         yield _sse(
                             Constants.EVENT_CONTENT_BLOCK_DELTA,
                             {
@@ -805,24 +930,25 @@ async def convert_openai_streaming_to_claude_with_cancellation(
                             },
                         )
                         logger.info(
-                            f"[PROXY] Flushed sanitized args for {tc_data['name']}: "
+                            f"[PROXY] Flushed sanitized args for {final_name}: "
                             f"{sanitized[:200]}"
                         )
-                    if tc_data["started"]:
-                        estimated_output_tokens += _count_tokens_text(
-                            f"{tc_data['name']} {sanitized or tc_data['args_buffer'] or '{}'}"
-                        )
-                        observed_tool_calls.append(
-                            {
-                                "tool_id": tc_data["id"],
-                                "tool_name": tc_data["name"],
-                                "arguments": sanitized or tc_data["args_buffer"] or "{}",
-                                "status": "emitted",
-                                "sanitized": bool(
-                                    sanitized and sanitized != (tc_data["args_buffer"] or "{}")
-                                ),
-                            }
-                        )
+
+                    estimated_output_tokens += _count_tokens_text(
+                        f"{final_name} {sanitized or tc_data['args_buffer'] or '{}'}"
+                    )
+                    observed_tool_calls.append(
+                        {
+                            "tool_id": tc_data["id"],
+                            "tool_name": final_name,
+                            "arguments": sanitized or tc_data["args_buffer"] or "{}",
+                            "status": "emitted",
+                            "sanitized": bool(
+                                sanitized
+                                and sanitized != (tc_data["args_buffer"] or "{}")
+                            ),
+                        }
+                    )
                 final_stop_reason = _map_finish_reason(finish_reason)
                 if observability_context is not None:
                     observability_context["stop_reason"] = final_stop_reason
