@@ -48,7 +48,7 @@ async def dashboard_asset(asset_name: str, _: None = Depends(validate_dashboard_
 
 @router.get("/api/observability/summary")
 async def observability_summary(
-    hours: int = Query(24, ge=1, le=168),
+    hours: int = Query(24, ge=1, le=8760),
     _: None = Depends(validate_dashboard_api_key),
 ):
     summary = observability_recorder.fetch_summary(hours=hours)

@@ -73,6 +73,26 @@ class Config:
             "true",
             "yes",
         )
+        self.enable_request_optimizations = os.environ.get(
+            "ENABLE_REQUEST_OPTIMIZATIONS", "true"
+        ).lower() in ("1", "true", "yes")
+        self.fast_prefix_detection = os.environ.get("FAST_PREFIX_DETECTION", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.enable_network_probe_mock = os.environ.get(
+            "ENABLE_NETWORK_PROBE_MOCK", "true"
+        ).lower() in ("1", "true", "yes")
+        self.enable_title_generation_skip = os.environ.get(
+            "ENABLE_TITLE_GENERATION_SKIP", "true"
+        ).lower() in ("1", "true", "yes")
+        self.enable_suggestion_mode_skip = os.environ.get(
+            "ENABLE_SUGGESTION_MODE_SKIP", "true"
+        ).lower() in ("1", "true", "yes")
+        self.enable_filepath_extraction_mock = os.environ.get(
+            "ENABLE_FILEPATH_EXTRACTION_MOCK", "true"
+        ).lower() in ("1", "true", "yes")
 
         # Ensure bounds are sane even with misconfigured env values.
         if self.max_tokens_limit < 1:

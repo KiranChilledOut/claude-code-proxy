@@ -59,6 +59,10 @@ def main():
         print(
             f"  MAX_RETRIES - Retry attempts for provider requests (default: {config.max_retries})"
         )
+        print(
+            "  ENABLE_REQUEST_OPTIMIZATIONS - Answer Claude Code housekeeping "
+            f"requests locally (default: {config.enable_request_optimizations})"
+        )
         print("")
         print("Model mapping:")
         print(f"  Claude haiku models -> {config.small_model}")
@@ -82,11 +86,9 @@ def main():
         try:
             result = response.json()
         except ValueError:
-            print(
-                f"selftest: non-JSON response (status {response.status_code}): "
-                f"{response.text}",
-                file=sys.stderr,
-            )
+            status_code = response.status_code
+            message = f"selftest: non-JSON response (status {status_code}): {response.text}"
+            print(message, file=sys.stderr)
             sys.exit(2)
         json.dump(result, sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -111,6 +113,10 @@ def main():
     print(
         f"   Observability: {'Enabled' if config.observability_enabled else 'Disabled'} "
         f"({config.observability_db_path})"
+    )
+    print(
+        "   Request Optimizations: "
+        f"{'Enabled' if config.enable_request_optimizations else 'Disabled'}"
     )
     print("")
 

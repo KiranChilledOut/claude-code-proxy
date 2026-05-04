@@ -33,6 +33,17 @@ def test_pricing_catalog_computes_model_cost():
     assert quote["advertised_tok_s"] == pytest.approx(36.8)
 
 
+def test_pricing_catalog_treats_local_optimizations_as_free():
+    catalog = PricingCatalog("{}")
+
+    quote = catalog.quote("local/quota_probe", 1_000_000, 500_000)
+
+    assert quote["input_cost"] == 0
+    assert quote["output_cost"] == 0
+    assert quote["estimated_cost"] == 0
+    assert quote["currency"] == "USD"
+
+
 @pytest.mark.asyncio
 async def test_observability_recorder_persists_request_and_tool_call(tmp_path):
     db_path = tmp_path / "observability.sqlite3"

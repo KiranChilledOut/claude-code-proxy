@@ -132,7 +132,10 @@ step "Testing proxy connection"
 LOG=$(mktemp -t claude-proxy-smoke.XXXXXX.log)
 .venv/bin/python start_proxy.py >"$LOG" 2>&1 &
 PROXY_PID=$!
-cleanup() { kill "$PROXY_PID" 2>/dev/null || true; }
+cleanup() {
+  kill "$PROXY_PID" 2>/dev/null || true
+  wait "$PROXY_PID" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 PORT="$(grep -E '^PORT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '"' || echo 8083)"
@@ -182,64 +185,217 @@ printf "${C_PURPLE}│${C_RESET}    ${C_PURPLE}claudius${C_RESET}       → Alia
 printf "${C_PURPLE}╰───────────────────────────────────────────────────────────${C_RESET}\n"
 printf "\n"
 
-# Detect user's default shell profile
+# Detect user's shell profile. PowerShell usually keeps SHELL=/bin/zsh on macOS,
+# so prefer the parent process when install.sh was launched from pwsh.
+SHELL_KIND=""
 SHELL_RC=""
-user_shell="${SHELL:-/bin/bash}"
-case "$user_shell" in
-    */zsh)
-        SHELL_RC="$HOME/.zshrc"
-        ;;
-    */bash)
-        SHELL_RC="$HOME/.bashrc"
-        ;;
-    *)
-        if [[ -f "$HOME/.zshrc" ]]; then
-            SHELL_RC="$HOME/.zshrc"
-        elif [[ -f "$HOME/.bashrc" ]]; then
+
+pwsh_profile_path() {
+    command -v pwsh >/dev/null || return 1
+    pwsh -NoLogo -NoProfile -NonInteractive -Command '$PROFILE' 2>/dev/null \
+        | tr -d '\r' \
+        | tail -n 1
+}
+
+detect_shell_profile() {
+    local parent_comm parent_name user_shell pwsh_profile
+    parent_comm="$(ps -p "${PPID:-0}" -o comm= 2>/dev/null || true)"
+    parent_name="${parent_comm##*/}"
+
+    case "$parent_name" in
+        bash)
+            SHELL_KIND="bash"
             SHELL_RC="$HOME/.bashrc"
-        fi
-        ;;
-esac
+            return
+            ;;
+        zsh)
+            SHELL_KIND="zsh"
+            SHELL_RC="$HOME/.zshrc"
+            return
+            ;;
+        pwsh|pwsh-*|powershell|powershell.exe)
+            pwsh_profile="$(pwsh_profile_path || true)"
+            if [[ -n "$pwsh_profile" ]]; then
+                SHELL_KIND="pwsh"
+                SHELL_RC="$pwsh_profile"
+                return
+            fi
+            ;;
+    esac
 
-if [[ -f "$SHELL_RC" ]] && grep -q "claude() {" "$SHELL_RC" 2>/dev/null; then
-    yellow "Already configured in $SHELL_RC"
-else
-    printf "${C_GRAY}Add shell function to $SHELL_RC?${C_RESET} [${C_GREEN}Y${C_RESET}/n]: "
-    read -r response
-    case "${response:-y}" in
-        [Yy]|"")
-            if [[ -n "$SHELL_RC" ]]; then
-                # Backup before appending
-                cp "$SHELL_RC" "$SHELL_RC.bak.$(date +%s)"
-                green "Backed up $SHELL_RC"
+    user_shell="${SHELL:-/bin/bash}"
+    case "$user_shell" in
+        */pwsh|*/pwsh-*|*/powershell|*/powershell.exe)
+            pwsh_profile="$(pwsh_profile_path || true)"
+            if [[ -n "$pwsh_profile" ]]; then
+                SHELL_KIND="pwsh"
+                SHELL_RC="$pwsh_profile"
+            fi
+            ;;
+        */zsh)
+            SHELL_KIND="zsh"
+            SHELL_RC="$HOME/.zshrc"
+            ;;
+        */bash)
+            SHELL_KIND="bash"
+            SHELL_RC="$HOME/.bashrc"
+            ;;
+        *)
+            if [[ -f "$HOME/.zshrc" ]]; then
+                SHELL_KIND="zsh"
+                SHELL_RC="$HOME/.zshrc"
+            elif [[ -f "$HOME/.bashrc" ]]; then
+                SHELL_KIND="bash"
+                SHELL_RC="$HOME/.bashrc"
+            else
+                pwsh_profile="$(pwsh_profile_path || true)"
+                if [[ -n "$pwsh_profile" ]]; then
+                    SHELL_KIND="pwsh"
+                    SHELL_RC="$pwsh_profile"
+                fi
+            fi
+            ;;
+    esac
+}
 
-                # Use resolved PORT to avoid foot-gun with env variable collisions
-                cat >> "$SHELL_RC" <<SHELL_FUNC
+shell_label() {
+    case "$SHELL_KIND" in
+        pwsh) printf "PowerShell" ;;
+        zsh) printf "zsh" ;;
+        bash) printf "bash" ;;
+        *) printf "shell" ;;
+    esac
+}
+
+shell_already_configured() {
+    case "$SHELL_KIND" in
+        pwsh)
+            [[ -f "$SHELL_RC" ]] && grep -Eqi 'function[[:space:]]+(global:)?claude([^[:alnum:]_]|$)' "$SHELL_RC" 2>/dev/null
+            ;;
+        *)
+            [[ -f "$SHELL_RC" ]] && grep -q "claude() {" "$SHELL_RC" 2>/dev/null
+            ;;
+    esac
+}
+
+prepare_shell_profile() {
+    mkdir -p "$(dirname "$SHELL_RC")"
+    [[ -f "$SHELL_RC" ]] || touch "$SHELL_RC"
+    cp "$SHELL_RC" "$SHELL_RC.bak.$(date +%s)"
+    green "Backed up $SHELL_RC"
+}
+
+append_posix_shell_function() {
+    # Use resolved PORT to avoid foot-gun with env variable collisions.
+    cat >> "$SHELL_RC" <<SHELL_FUNC
 
 # Claude Shell Function — enables claude, claude --proxy, and claudius
 claude() {
     local proxy_url="http://localhost:${PORT}"
 
     if [[ "\$1" == "--proxy" ]]; then
-        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
-        ANTHROPIC_AUTH_TOKEN="tokenfactory" \\
-        ANTHROPIC_API_KEY="dummy" \\
-        ANTHROPIC_BASE_URL="\$proxy_url" \\
-        command claude "\${@:2}"
+        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ bearer auth via local proxy\033[0m\n"
+        (
+            unset ANTHROPIC_API_KEY
+            export ANTHROPIC_AUTH_TOKEN="claude-local"
+            export ANTHROPIC_BASE_URL="\$proxy_url"
+            command claude "\${@:2}"
+        )
     else
         printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
-        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \\
-        command claude "\$@"
+        (
+            unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+            command claude "\$@"
+        )
     fi
 }
 
 # Alias for users who prefer claudius style
 alias claudius='claude --proxy'
 SHELL_FUNC
+}
+
+append_pwsh_shell_function() {
+    # Use resolved PORT to avoid foot-gun with env variable collisions.
+    cat >> "$SHELL_RC" <<PWSH_FUNC
+
+# Claude Shell Function - enables claude, claude --proxy, and claudius
+function claude {
+    param(
+        [Parameter(ValueFromRemainingArguments = \$true)]
+        [string[]] \$ClaudeArgs
+    )
+
+    \$proxyUrl = "http://localhost:${PORT}"
+    \$claudeCommand = (Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    \$oldAuthToken = \$env:ANTHROPIC_AUTH_TOKEN
+    \$oldApiKey = \$env:ANTHROPIC_API_KEY
+    \$oldBaseUrl = \$env:ANTHROPIC_BASE_URL
+
+    if (\$ClaudeArgs.Count -gt 0 -and \$ClaudeArgs[0] -eq "--proxy") {
+        Write-Host "\`e[38;5;129m▐▛▜▌ Claude via Proxy\`e[0m  \`e[38;5;244m-> bearer auth via local proxy\`e[0m"
+        [string[]] \$remainingArgs = @()
+        if (\$ClaudeArgs.Count -gt 1) {
+            \$remainingArgs = [string[]] \$ClaudeArgs[1..(\$ClaudeArgs.Count - 1)]
+        }
+
+        try {
+            \$env:ANTHROPIC_AUTH_TOKEN = "claude-local"
+            Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+            \$env:ANTHROPIC_BASE_URL = \$proxyUrl
+            & \$claudeCommand @remainingArgs
+        } finally {
+            if (\$null -eq \$oldAuthToken) { Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_AUTH_TOKEN = \$oldAuthToken }
+            if (\$null -eq \$oldApiKey) { Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_API_KEY = \$oldApiKey }
+            if (\$null -eq \$oldBaseUrl) { Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_BASE_URL = \$oldBaseUrl }
+        }
+    } else {
+        Write-Host "\`e[38;5;46m▐▛▜▌ Claude Direct\`e[0m  \`e[38;5;244m-> subscription login auth\`e[0m"
+
+        try {
+            Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+            Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue
+            & \$claudeCommand @ClaudeArgs
+        } finally {
+            if (\$null -ne \$oldAuthToken) { \$env:ANTHROPIC_AUTH_TOKEN = \$oldAuthToken }
+            if (\$null -ne \$oldApiKey) { \$env:ANTHROPIC_API_KEY = \$oldApiKey }
+            if (\$null -ne \$oldBaseUrl) { \$env:ANTHROPIC_BASE_URL = \$oldBaseUrl }
+        }
+    }
+}
+
+function claudius {
+    param(
+        [Parameter(ValueFromRemainingArguments = \$true)]
+        [string[]] \$ClaudeArgs
+    )
+
+    claude --proxy @ClaudeArgs
+}
+PWSH_FUNC
+}
+
+detect_shell_profile
+
+if [[ -z "$SHELL_RC" ]]; then
+    red "Could not detect shell profile"
+elif shell_already_configured; then
+    yellow "Already configured in $SHELL_RC"
+else
+    printf "${C_GRAY}Add $(shell_label) function to $SHELL_RC?${C_RESET} [${C_GREEN}Y${C_RESET}/n]: "
+    read -r response
+    case "${response:-y}" in
+        [Yy]|"")
+            prepare_shell_profile
+            if [[ "$SHELL_KIND" == "pwsh" ]]; then
+                append_pwsh_shell_function
+                green "Added to $SHELL_RC"
+                yellow "Restart PowerShell or run: . \$PROFILE"
+            else
+                append_posix_shell_function
                 green "Added to $SHELL_RC"
                 yellow "Run: source $SHELL_RC"
-            else
-                red "Could not detect shell profile"
             fi
             ;;
         *)

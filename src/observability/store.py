@@ -180,7 +180,7 @@ class ObservabilityRecorder:
                 FROM requests
                 """
             ).fetchone()
-            series = self._fetch_series(conn, cutoff)
+            series = self._fetch_series(conn, cutoff, hours)
             model_stats = self._fetch_model_stats(conn, cutoff)
 
         return {
@@ -405,11 +405,20 @@ class ObservabilityRecorder:
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(query, params).fetchall()]
 
-    def _fetch_series(self, conn: sqlite3.Connection, cutoff: float) -> List[Dict[str, Any]]:
+    def _fetch_series(
+        self, conn: sqlite3.Connection, cutoff: float, hours: int
+    ) -> List[Dict[str, Any]]:
+        if hours > 24 * 90:
+            bucket_seconds = 24 * 60 * 60
+        elif hours > 24 * 7:
+            bucket_seconds = 60 * 60
+        else:
+            bucket_seconds = 5 * 60
+
         rows = conn.execute(
             """
             SELECT
-                CAST(started_at_unix / 300 AS INTEGER) * 300 AS bucket,
+                CAST(started_at_unix / ? AS INTEGER) * ? AS bucket,
                 COUNT(*) AS request_count,
                 COALESCE(SUM(input_tokens), 0) AS input_tokens,
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
@@ -420,7 +429,7 @@ class ObservabilityRecorder:
             GROUP BY bucket
             ORDER BY bucket ASC
             """,
-            (cutoff,),
+            (bucket_seconds, bucket_seconds, cutoff),
         ).fetchall()
         return [
             {

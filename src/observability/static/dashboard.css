@@ -138,6 +138,63 @@ th {
   margin-bottom: 12px;
 }
 
+.table-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.table-panel .panel-head {
+  margin: 0;
+}
+
+.collapse-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.collapse-toggle:hover {
+  background: var(--surface-subtle);
+}
+
+.collapse-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.panel-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chevron {
+  color: var(--blue);
+  font-size: 15px;
+}
+
+.table-panel:not(.is-collapsed) .chevron {
+  transform: rotate(90deg);
+}
+
+.collapsible-content {
+  border-top: 1px solid var(--line);
+  padding: 12px 16px 16px;
+}
+
+.table-panel.is-collapsed .collapsible-content {
+  display: none;
+}
+
 .model-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -197,7 +254,10 @@ canvas {
 }
 
 .table-wrap {
-  overflow-x: auto;
+  max-height: min(560px, 70vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 table {
@@ -213,6 +273,59 @@ td {
   border-bottom: 1px solid var(--line);
   vertical-align: top;
   font-size: 13px;
+}
+
+th {
+  white-space: nowrap;
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.sort-button {
+  display: inline-flex;
+  width: 100%;
+  height: auto;
+  min-height: 28px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-weight: 650;
+}
+
+.sort-button:hover,
+.sort-button.active {
+  color: var(--text);
+}
+
+.sort-indicator {
+  display: inline-flex;
+  width: 14px;
+  color: var(--blue);
+  font-size: 10px;
+}
+
+.filter-row th {
+  padding-top: 0;
+  top: 38px;
+  z-index: 3;
+}
+
+.column-filter {
+  width: 100%;
+  height: 30px;
+  min-width: 92px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
 }
 
 td code {
