@@ -4,7 +4,7 @@ This document describes the shell functions that enable easy switching between *
 
 ## Quick Start
 
-Add the following to your `~/.zshrc` or `~/.bashrc`:
+For zsh or bash, add the following to your `~/.zshrc` or `~/.bashrc`:
 
 ```bash
 # Claude Shell Function — enables claude, claude --proxy, and claudius
@@ -12,15 +12,19 @@ claude() {
     local proxy_url="http://localhost:8083"
 
     if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then
-        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ API key auth via local proxy\033[0m\n"
-        ANTHROPIC_AUTH_TOKEN="tokenfactory" \
-        ANTHROPIC_API_KEY="dummy" \
-        ANTHROPIC_BASE_URL="$proxy_url" \
-        command claude "${@:2}"
+        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ bearer auth via local proxy\033[0m\n"
+        (
+            unset ANTHROPIC_API_KEY
+            export ANTHROPIC_AUTH_TOKEN="claude-local"
+            export ANTHROPIC_BASE_URL="$proxy_url"
+            command claude "${@:2}"
+        )
     else
         printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
-        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-        command claude "$@"
+        (
+            unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+            command claude "$@"
+        )
     fi
 }
 
@@ -29,6 +33,14 @@ alias claudius='claude --proxy'
 ```
 
 Then restart your shell or run: `source ~/.zshrc` (or `~/.bashrc`)
+
+For PowerShell (`pwsh`), run `./install.sh` from PowerShell and accept the
+prompt. The installer writes a native PowerShell function to `$PROFILE`.
+Restart PowerShell or run:
+
+```powershell
+. $PROFILE
+```
 
 ## Usage
 
@@ -72,7 +84,8 @@ local proxy_url="http://localhost:9090"  # Your custom port
 
 ## Auto-Installation
 
-The `install.sh` script can automatically configure this for you. Run:
+The `install.sh` script can automatically configure this for zsh, bash, or
+PowerShell. Run:
 
 ```bash
 ./install.sh

@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.api.optimization_handlers import optimized_response_to_sse, try_local_optimization
 from src.conversion.request_converter import (
     _count_tokens_text,
     _estimate_prompt_tokens,
@@ -175,16 +176,48 @@ async def create_message(
 
         logger.debug(f"Processing Claude request: model={request.model}, stream={request.stream}")
 
+        # Check if client disconnected before doing either local work or upstream calls.
+        if await http_request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client disconnected")
+
+        optimized = try_local_optimization(request)
+        if optimized is not None:
+            backend_model = f"local/{optimized.kind}"
+            observability_usage = dict(optimized.response.get("usage") or {})
+            observability_usage["source"] = "local_optimization"
+            _record_message_observability(
+                request_id=request_id,
+                started_at=started_at,
+                started_at_unix=started_at_unix,
+                start_monotonic=start_monotonic,
+                request=request,
+                backend_model=backend_model,
+                stream=bool(request.stream),
+                status="success",
+                http_status=200,
+                usage=observability_usage,
+                stop_reason=optimized.response.get("stop_reason"),
+                tool_calls=[],
+            )
+            if request.stream:
+                return StreamingResponse(
+                    optimized_response_to_sse(optimized.response),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    },
+                )
+            return optimized.response
+
         # Convert Claude request to OpenAI format
         openai_request = convert_claude_to_openai(request, model_manager)
         backend_model = openai_request.get("model")
         estimated_input_tokens = _estimate_prompt_tokens(
             openai_request.get("messages", []), include_safety_buffer=False
         )
-
-        # Check if client disconnected before processing
-        if await http_request.is_disconnected():
-            raise HTTPException(status_code=499, detail="Client disconnected")
 
         if request.stream:
             # Streaming response - wrap in error handling

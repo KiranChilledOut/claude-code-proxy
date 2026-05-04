@@ -23,6 +23,15 @@ class PricingCatalog:
         self.prices = self._load_prices(self.raw_json)
 
     def quote(self, model: Optional[str], input_tokens: int, output_tokens: int) -> Dict[str, Any]:
+        if model and model.startswith("local/"):
+            return {
+                "input_cost": 0,
+                "output_cost": 0,
+                "estimated_cost": 0,
+                "currency": "USD",
+                "advertised_tok_s": None,
+            }
+
         price = self.get(model)
         if price is None:
             return {

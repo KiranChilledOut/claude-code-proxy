@@ -45,6 +45,8 @@ claude-code-proxy/
 - Pair-aware context auto-truncation (never orphans tool_results)
 - Tool-call JSON repair (trailing commas, unescaped newlines) and duplicate
   tool-call dedup for open models — always on, no configuration needed
+- Local fast-path responses for Claude Code housekeeping calls: quota probes,
+  command-prefix detection, title generation, suggestion mode, and filepath extraction
 
 ## Quick Start
 
@@ -92,6 +94,18 @@ VISION_MODEL="Qwen/Qwen2.5-VL-72B-Instruct"
 STRIP_IMAGE_CONTEXT="true"
 ```
 
+Local request optimizations are enabled by default. They avoid Nebius calls for
+Claude Code housekeeping requests that do not need model reasoning:
+
+```bash
+ENABLE_REQUEST_OPTIMIZATIONS="true"
+FAST_PREFIX_DETECTION="true"
+ENABLE_NETWORK_PROBE_MOCK="true"
+ENABLE_TITLE_GENERATION_SKIP="true"
+ENABLE_SUGGESTION_MODE_SKIP="true"
+ENABLE_FILEPATH_EXTRACTION_MOCK="true"
+```
+
 #### Reasoning models
 
 Several Nebius-hosted models emit *hidden* reasoning tokens before producing
@@ -131,26 +145,27 @@ uv run claude-code-proxy-nebius
 
 ### Use with Claude Code
 
-Claude Code talks to the proxy via two environment variables:
-`ANTHROPIC_BASE_URL` (where to send requests) and `ANTHROPIC_API_KEY`
-(by default, the proxy ignores the client key and accepts any non-empty
-string).
+Claude Code talks to the proxy via `ANTHROPIC_BASE_URL` plus one auth variable.
+Prefer `ANTHROPIC_AUTH_TOKEN`; setting both `ANTHROPIC_AUTH_TOKEN` and
+`ANTHROPIC_API_KEY` makes Claude Code print auth-conflict warnings.
 
 To wire this up permanently, add the following to your shell rc
-(`~/.zshrc` or `~/.bashrc`), then open a new terminal:
+(`~/.zshrc`, `~/.bashrc`, or the equivalent PowerShell profile), then open a
+new terminal:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8083
-export ANTHROPIC_API_KEY=claude-local
+export ANTHROPIC_AUTH_TOKEN=claude-local
 ```
 
 Or run as a one-off, prefixing the env vars on the command line:
 
 ```bash
-ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude
+ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_AUTH_TOKEN=claude-local claude
 ```
 
-If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
+If `IGNORE_CLIENT_API_KEY=false`, the client token must match `ANTHROPIC_API_KEY`
+in the proxy `.env`.
 
 ### Quick Switch: `claude`, `claude --proxy`, and `claudius`
 
@@ -158,7 +173,8 @@ This project includes a shell function that lets you switch between direct (subs
 
 See [docs/SHELL_FUNCTION.md](./docs/SHELL_FUNCTION.md) for the full function code and usage guide.
 
-The install script (`./install.sh`) can automatically configure this for you — just say yes when prompted.
+The install script (`./install.sh`) can automatically configure this for zsh,
+bash, or PowerShell — just say yes when prompted.
 
 #### Statusline indicator (optional)
 
@@ -171,18 +187,18 @@ proxy. A custom statusline fixes that. Add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; env_file=\"/Users/kiran/Desktop/git/claude-code-proxy/.env\"; model=$(grep -m1 '^BIG_MODEL=' \"$env_file\" 2>/dev/null | cut -d= -f2-); obs=$(grep -m1 '^OBSERVABILITY_ENABLED=' \"$env_file\" 2>/dev/null | cut -d= -f2-); port=$(grep -m1 '^PORT=' \"$env_file\" 2>/dev/null | cut -d= -f2-); port=${port:-8083}; if [ \"$obs\" = \"true\" ] && [ -n \"$model\" ]; then echo \"[nebius://$model] http://localhost:$port/dashboard\"; elif [ -n \"$model\" ]; then echo \"[nebius://$model]\"; else echo \"[proxy://$ANTHROPIC_BASE_URL]\"; fi"
+    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; base=\"${ANTHROPIC_BASE_URL%/}\"; cfg=$(curl -fsS --max-time 1 \"$base/api/observability/config\" 2>/dev/null || true); model=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get(\"configured_models\") or {}).get(\"big\") or \"\")' 2>/dev/null || true); obs=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(\"true\" if d.get(\"observability_enabled\") else \"false\")' 2>/dev/null || true); if [ \"$obs\" = \"true\" ] && [ -n \"$model\" ]; then echo \"[nebius://$model] $base/dashboard\"; elif [ -n \"$model\" ]; then echo \"[nebius://$model]\"; else echo \"[proxy://$base]\"; fi"
   }
 }
 ```
 
-Replace `/path/to/claude-code-proxy/.env` with the absolute path to your
-`.env`. Behavior:
+The command reads config from the running proxy, so it does not need to know
+where the proxy repo is checked out. Behavior:
 
 - Bare `claude` (no proxy) → statusline is blank, no clutter.
 - Proxy-routed + observability enabled → statusline shows e.g. `[nebius://MiniMax-M2.5] http://localhost:8083/dashboard`.
 - Proxy-routed + observability disabled → statusline shows e.g. `[nebius://MiniMax-M2.5]`.
-- If the `.env` path is unreadable → falls back to `[proxy://<ANTHROPIC_BASE_URL>]`
+- If the proxy config endpoint is unreachable → falls back to `[proxy://<ANTHROPIC_BASE_URL>]`
   so you still know an interceptor is active.
 
 The command is read at session start, so re-open Claude Code after editing
