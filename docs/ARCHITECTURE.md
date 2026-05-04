@@ -43,11 +43,51 @@ Core environment variables:
 ```bash
 OPENAI_API_KEY=<nebius-key>
 OPENAI_BASE_URL=https://api.tokenfactory.nebius.com/v1
-BIG_MODEL=zai-org/GLM-4.5
-MIDDLE_MODEL=zai-org/GLM-4.5
-SMALL_MODEL=zai-org/GLM-4.5
+BIG_MODEL=moonshotai/Kimi-K2.5
+MIDDLE_MODEL=zai-org/GLM-5
+SMALL_MODEL=google/gemma-3-27b-it
 VISION_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
 ```
+
+### `/model` aliases
+
+Inside Claude Code, users can type `/model <alias>` to switch upstream models without restarting the proxy or editing `.env`. `ModelManager` resolves the alias on each request, so the choice is stateless from the proxy's perspective.
+
+| Alias | Default upstream | Override env var |
+| --- | --- | --- |
+| `glm` | `zai-org/GLM-5` | `GLM_MODEL` |
+| `kimi` | `moonshotai/Kimi-K2.5` | `KIMI_MODEL` |
+| `gemma` | `google/gemma-3-27b-it` | `GEMMA_MODEL` |
+| `qwen` | `Qwen/Qwen3.5-397B-A17B` | `QWEN_MODEL` |
+| `nemotron` | `nvidia/Llama-3_1-Nemotron-Ultra-253B-v1` | `NEMOTRON_MODEL` |
+| `super` | `nvidia/nemotron-3-super-120b-a12b` | `NEMOTRON_SUPER_MODEL` |
+| `nano` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | `NEMOTRON_NANO_MODEL` |
+| `minimax` | `MiniMaxAI/MiniMax-M2.5` | `MINIMAX_MODEL` |
+| `hermes` | `NousResearch/Hermes-4-405B` | `HERMES_MODEL` |
+| `gpt` | `openai/gpt-oss-120b` | `GPT_MODEL` |
+| `llama` | `meta-llama/Meta-Llama-3.1-8B-Instruct` | `LLAMA_MODEL` |
+| `prime` | `PrimeIntellect/INTELLECT-3` | `PRIME_MODEL` |
+| `deepseek` | `deepseek-ai/DeepSeek-V3.2` | `DEEPSEEK_MODEL` |
+
+Resolution rules in order:
+
+1. **Native passthrough.** Ids beginning with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim.
+2. **Slash-passthrough.** Ids containing a `/` (Token Factory / HF-style, e.g. `meta-llama/Llama-3.3-70B-Instruct`) pass through verbatim. This lets users pick any catalog entry directly.
+3. **Exact alias match.** Lookup in the table above.
+4. **Keyword match** for `glm` / `kimi` / `gemma` substrings (e.g. `glm-5`, `kimi-2.5`) — resolves via the alias.
+5. **Fallback** → `BIG_MODEL`.
+
+### Picker contents (`/v1/models`)
+
+`/v1/models` surfaces three groups, in this order:
+
+1. The short aliases above (`glm`, `kimi`, `gemma`).
+2. The full upstream Token Factory catalog, fetched from `{OPENAI_BASE_URL}/v1/models` and cached at module level for `MODELS_CACHE_TTL_SECONDS` (default 600). On upstream error the listing degrades to whatever was cached, or to just the aliases if nothing has been cached yet.
+3. Any extra ids from `BIG_MODEL` / `MIDDLE_MODEL` / `SMALL_MODEL` / `VISION_MODEL` that the upstream catalog didn't already include.
+
+Claude Code's built-in `/model` picker is hardcoded and only enumerates its native model entries plus the *currently-selected* custom model (looked up by id from this listing). For an actual picker UX over the full catalog, install the bundled `/models` custom slash command from `scripts/claude-code/` (see `scripts/claude-code/README.md`). It shows a numbered list (curated shortcuts + any live catalog extras) and writes the choice to `~/.claude/settings.local.json`.
+
+To use any catalog id directly, type it as `/model meta-llama/Llama-3.3-70B-Instruct` etc. — Claude Code accepts arbitrary `--model` strings and the proxy's slash-passthrough routes them verbatim.
 
 ## Request Lifecycle
 
