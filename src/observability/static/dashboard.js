@@ -3,6 +3,8 @@ const state = {
   requests: [],
   failures: [],
   toolCalls: [],
+  refreshing: false,
+  refreshQueued: false,
   tables: {
     modelStats: { sort: { column: "request_count", direction: "desc" }, filters: {} },
     requests: { sort: { column: "started_at", direction: "desc" }, filters: {} },
@@ -367,18 +369,30 @@ async function fetchJson(url) {
 }
 
 async function refresh() {
-  const hours = el("windowSelect").value;
-  const [summary, requests, failures, toolCalls] = await Promise.all([
-    fetchJson(`/api/observability/summary?hours=${hours}`),
-    fetchJson("/api/observability/requests?limit=500"),
-    fetchJson("/api/observability/failures?limit=500"),
-    fetchJson("/api/observability/tool-calls?limit=500"),
-  ]);
-  state.summary = summary;
-  state.requests = requests.data || [];
-  state.failures = failures.data || [];
-  state.toolCalls = toolCalls.data || [];
-  render();
+  if (state.refreshing) {
+    state.refreshQueued = true;
+    return;
+  }
+  state.refreshing = true;
+  try {
+    do {
+      state.refreshQueued = false;
+      const hours = el("windowSelect").value;
+      const [summary, requests, failures, toolCalls] = await Promise.all([
+        fetchJson(`/api/observability/summary?hours=${hours}`),
+        fetchJson("/api/observability/requests?limit=500"),
+        fetchJson("/api/observability/failures?limit=500"),
+        fetchJson("/api/observability/tool-calls?limit=500"),
+      ]);
+      state.summary = summary;
+      state.requests = requests.data || [];
+      state.failures = failures.data || [];
+      state.toolCalls = toolCalls.data || [];
+      render();
+    } while (state.refreshQueued);
+  } finally {
+    state.refreshing = false;
+  }
 }
 
 function render() {
@@ -459,11 +473,21 @@ function renderCharts() {
 function drawSeriesChart(canvas, rows, opts) {
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth || 600;
-  const height = Number(canvas.getAttribute("height")) || 210;
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  ctx.scale(dpr, dpr);
+  if (!canvas.dataset.chartHeight) {
+    canvas.dataset.chartHeight = canvas.getAttribute("height") || "210";
+  }
+  const height = Number(canvas.dataset.chartHeight) || 210;
+  canvas.style.height = `${height}px`;
+  canvas.style.width = "100%";
+
+  const rect = canvas.getBoundingClientRect();
+  const parentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
+  const width = Math.max(1, Math.floor(rect.width || parentWidth || 600));
+  const pixelWidth = Math.max(1, Math.floor(width * dpr));
+  const pixelHeight = Math.max(1, Math.floor(height * dpr));
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
   const pad = { top: 18, right: 18, bottom: 34, left: 54 };
