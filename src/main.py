@@ -1,4 +1,9 @@
+import os
+import signal
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -24,10 +29,113 @@ async def shutdown_event():
     await observability_recorder.stop()
 
 
+# --- Daemon helpers (start/stop/status) -------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PID_FILE = REPO_ROOT / ".proxy.pid"
+LOG_FILE = REPO_ROOT / "proxy.log"
+
+
+def _read_pid():
+    if not PID_FILE.exists():
+        return None
+    try:
+        return int(PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
+def _process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def daemon_start():
+    pid = _read_pid()
+    if pid is not None and _process_alive(pid):
+        print(f"proxy already running (pid {pid})")
+        return 0
+
+    log = open(LOG_FILE, "a")
+    proc = subprocess.Popen(
+        [sys.executable, str(REPO_ROOT / "start_proxy.py")],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        cwd=str(REPO_ROOT),
+        start_new_session=True,
+    )
+    PID_FILE.write_text(f"{proc.pid}\n")
+    print(f"proxy started (pid {proc.pid}); logs: {LOG_FILE}")
+    return 0
+
+
+def daemon_stop():
+    pid = _read_pid()
+    if pid is None:
+        print("proxy not running (no PID file)")
+        return 0
+    if not _process_alive(pid):
+        print(f"proxy not running (stale PID file for pid {pid}); cleaning up")
+        PID_FILE.unlink(missing_ok=True)
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        PID_FILE.unlink(missing_ok=True)
+        return 0
+    for _ in range(20):
+        if not _process_alive(pid):
+            break
+        time.sleep(0.25)
+    else:
+        print("proxy did not exit on SIGTERM, sending SIGKILL")
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    PID_FILE.unlink(missing_ok=True)
+    print(f"proxy stopped (pid {pid})")
+    return 0
+
+
+def daemon_status():
+    pid = _read_pid()
+    if pid is None:
+        print("proxy not running")
+        return 1
+    if _process_alive(pid):
+        print(f"proxy running (pid {pid})")
+        return 0
+    print(f"proxy not running (stale PID file for pid {pid})")
+    PID_FILE.unlink(missing_ok=True)
+    return 1
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("start", "stop", "status"):
+        cmd = sys.argv[1]
+        if cmd == "start":
+            sys.exit(daemon_start())
+        if cmd == "stop":
+            sys.exit(daemon_stop())
+        if cmd == "status":
+            sys.exit(daemon_status())
+
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Claude-to-OpenAI API Proxy v1.0.0")
         print("")
+        print("Usage: python start_proxy.py [start|stop|status|--help]")
+        print("")
+        print("  (no args)    Run the proxy in the foreground (Ctrl-C to stop).")
+        print("  start        Start the proxy as a detached background process.")
+        print("               PID is recorded in .proxy.pid; logs go to proxy.log.")
+        print("  stop         Stop a background-running proxy via .proxy.pid.")
+        print("  status       Print whether a background proxy is currently running.")
         print("Usage: python start_proxy.py [--help|--selftest]")
         print("")
         print("  --selftest   Hit /test-connection in-process and exit 0 if it")
