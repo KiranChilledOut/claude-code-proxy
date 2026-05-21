@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,13 +7,40 @@
     <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <h1>Claude Proxy Observability</h1>
-          <p id="providerLine">Loading provider...</p>
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar" aria-label="Session navigation">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Sessions</span>
+        <input type="search" class="session-search" id="sessionSearch" placeholder="Search sessions..." aria-label="Search sessions" />
+      </div>
+      <div class="sidebar-global">
+        <button class="session-card session-card--active" id="globalOverviewBtn" data-view="global">
+          <span class="session-card-title">Global Overview</span>
+          <span class="session-card-subtitle">All sessions aggregated</span>
+        </button>
+      </div>
+      <div class="session-list" id="sessionList"></div>
+      <div class="session-skeleton" id="sessionSkeleton">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line short"></div>
+        <div class="skeleton-bar"></div>
+      </div>
+    </aside>
+
+    <!-- Mobile sidebar backdrop -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- Main wrapper -->
+    <div class="main-wrapper">
+      <!-- Top App Bar -->
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+            <svg class="icon-hamburger" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+          </button>
+          <h1 class="app-title">Claude Proxy</h1>
         </div>
-        <div class="toolbar">
+        <div class="top-bar-right">
           <select id="windowSelect" aria-label="Time window">
             <option value="1">1h</option>
             <option value="6">6h</option>
@@ -23,198 +50,418 @@
             <option value="720">1mo</option>
             <option value="8760">1yr</option>
           </select>
-          <button id="refreshBtn" type="button">Refresh</button>
+          <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" style="display:none" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          </button>
+          <button class="refresh-btn" id="refreshBtn" aria-label="Refresh data">
+            <svg class="icon-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 002.69 6.77M3.51 15A9 9 0 0021.31 17.23" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+          </button>
         </div>
       </header>
 
-      <section class="cards metric-grid">
-        <article class="metric">
-          <span>Requests</span>
-          <strong id="requestCount">0</strong>
-          <small id="allTimeRequests">0 all time</small>
-        </article>
-        <article class="metric">
-          <span>Estimated Cost</span>
-          <strong id="costTotal">$0.0000</strong>
-          <small id="allTimeCost">$0.0000 all time</small>
-        </article>
-        <article class="metric">
-          <span>Tokens</span>
-          <strong id="tokenTotal">0</strong>
-          <small id="tokenSplit">0 in / 0 out</small>
-        </article>
-        <article class="metric">
-          <span>Failures</span>
-          <strong id="failureCount">0</strong>
-          <small id="failureRate">0%</small>
-        </article>
-        <article class="metric">
-          <span>Avg Latency</span>
-          <strong id="avgLatency">0 ms</strong>
-          <small>window average</small>
-        </article>
-        <article class="metric">
-          <span>Tool Calls</span>
-          <strong id="toolCount">0</strong>
-          <small id="toolArgsMode">arguments disabled</small>
-        </article>
-      </section>
+      <!-- Content Area -->
+      <main class="content-area">
+        <!-- Global View (existing content) -->
+        <div id="globalView">
+          <p id="providerLine">Loading provider...</p>
 
-      <section class="panel model-panel">
-        <div class="panel-head">
-          <h2>Provider And Models</h2>
-        </div>
-        <div id="modelCards" class="model-grid"></div>
-      </section>
+          <section class="cards metric-grid">
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2" fill="currentColor"/><circle cx="17" cy="17" r="2" fill="currentColor"/><circle cx="17" cy="7" r="2" fill="currentColor"/></svg>
+              </div>
+              <span>Requests</span>
+              <strong id="requestCount">0</strong>
+              <small id="allTimeRequests">0 all time</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1v22M1 12h22" stroke="currentColor" stroke-width="2" display="none"/><text x="12" y="18" text-anchor="middle" font-size="18" font-weight="bold" fill="currentColor">$</text></svg>
+              </div>
+              <span>Estimated Cost</span>
+              <strong id="costTotal">$0.0000</strong>
+              <small id="allTimeCost">$0.0000 all time</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Tokens</span>
+              <strong id="tokenTotal">0</strong>
+              <small id="tokenSplit">0 in / 0 out</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Failures</span>
+              <strong id="failureCount">0</strong>
+              <small id="failureRate">0%</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Avg Latency</span>
+              <strong id="avgLatency">0 ms</strong>
+              <small>window average</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Tool Calls</span>
+              <strong id="toolCount">0</strong>
+              <small id="toolArgsMode">arguments disabled</small>
+            </article>
+          </section>
 
-      <section class="chart-grid">
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Tokens Over Time</h2>
-          </div>
-          <canvas id="tokensChart" height="210"></canvas>
-        </article>
-        <article class="panel">
-          <div class="panel-head">
-            <h2>Cost Over Time</h2>
-          </div>
-          <canvas id="costChart" height="210"></canvas>
-        </article>
-      </section>
+          <section class="panel model-panel">
+            <div class="panel-head">
+              <h2>Provider And Models</h2>
+            </div>
+            <div id="modelCards" class="model-grid"></div>
+          </section>
 
-      <section class="panel table-panel is-collapsed" data-collapsible="modelStats">
-        <div class="panel-head">
-          <button
-            class="collapse-toggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="modelStatsPanel"
-            data-target="modelStatsPanel"
-          >
-            <span class="collapse-title">Model Breakdown</span>
-            <span id="modelStatsCount" class="panel-count">0 rows</span>
-            <span class="chevron" aria-hidden="true">▸</span>
-          </button>
-        </div>
-        <div id="modelStatsPanel" class="collapsible-content">
-          <div class="table-wrap">
-          <table data-table="modelStats">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Requests</th>
-                <th>Tokens</th>
-                <th>Cost</th>
-                <th>Latency</th>
-                <th>Observed Tok/s</th>
-                <th>Advertised Tok/s</th>
-                <th>Failures</th>
-              </tr>
-            </thead>
-            <tbody id="modelStatsBody"></tbody>
-          </table>
-          </div>
-        </div>
-      </section>
+          <section class="chart-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Tokens Over Time</h2>
+              </div>
+              <canvas id="tokensChart" height="210"></canvas>
+            </article>
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Cost Over Time</h2>
+              </div>
+              <canvas id="costChart" height="210"></canvas>
+            </article>
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Cumulative Cost</h2>
+              </div>
+              <canvas id="cumulativeCostChart" height="210"></canvas>
+            </article>
+            <article class="panel">
+              <div class="panel-head">
+                <h2>Cumulative Tokens</h2>
+              </div>
+              <canvas id="cumulativeTokensChart" height="210"></canvas>
+            </article>
+          </section>
 
-      <section class="panel table-panel is-collapsed" data-collapsible="requests">
-        <div class="panel-head">
-          <button
-            class="collapse-toggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="requestsPanel"
-            data-target="requestsPanel"
-          >
-            <span class="collapse-title">Recent Requests</span>
-            <span id="requestsCount" class="panel-count">0 rows</span>
-            <span class="chevron" aria-hidden="true">▸</span>
-          </button>
-        </div>
-        <div id="requestsPanel" class="collapsible-content">
-          <div class="table-wrap">
-          <table data-table="requests">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Claude Model</th>
-                <th>Backend Model</th>
-                <th>Tokens</th>
-                <th>Usage</th>
-                <th>Cost</th>
-                <th>Latency</th>
-                <th>Tools</th>
-              </tr>
-            </thead>
-            <tbody id="requestsBody"></tbody>
-          </table>
-          </div>
-        </div>
-      </section>
+          <section class="panel table-panel is-collapsed" data-collapsible="modelStats">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="modelStatsPanel"
+                data-target="modelStatsPanel"
+              >
+                <span class="collapse-title">Model Breakdown</span>
+                <span id="modelStatsCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="modelStatsPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="modelStats">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Requests</th>
+                      <th>Tokens</th>
+                      <th>Cost</th>
+                      <th>Latency</th>
+                      <th>Observed Tok/s</th>
+                      <th>Advertised Tok/s</th>
+                      <th>Failures</th>
+                    </tr>
+                  </thead>
+                  <tbody id="modelStatsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-      <section class="panel table-panel is-collapsed" data-collapsible="failures">
-        <div class="panel-head">
-          <button
-            class="collapse-toggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="failuresPanel"
-            data-target="failuresPanel"
-          >
-            <span class="collapse-title">Failures</span>
-            <span id="failuresCount" class="panel-count">0 rows</span>
-            <span class="chevron" aria-hidden="true">▸</span>
-          </button>
-        </div>
-        <div id="failuresPanel" class="collapsible-content">
-          <div class="table-wrap">
-          <table data-table="failures">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Model</th>
-                <th>Status</th>
-                <th>Error</th>
-              </tr>
-            </thead>
-            <tbody id="failuresBody"></tbody>
-          </table>
-          </div>
-        </div>
-      </section>
+          <section class="panel table-panel is-collapsed" data-collapsible="requests">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="requestsPanel"
+                data-target="requestsPanel"
+              >
+                <span class="collapse-title">Recent Requests</span>
+                <span id="requestsCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="requestsPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="requests">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Status</th>
+                      <th>Claude Model</th>
+                      <th>Backend Model</th>
+                      <th>Tokens</th>
+                      <th>Usage</th>
+                      <th>Cost</th>
+                      <th>Latency</th>
+                      <th>Tools</th>
+                    </tr>
+                  </thead>
+                  <tbody id="requestsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
 
-      <section class="panel table-panel is-collapsed" data-collapsible="toolCalls">
-        <div class="panel-head">
-          <button
-            class="collapse-toggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="toolCallsPanel"
-            data-target="toolCallsPanel"
-          >
-            <span class="collapse-title">Tool Calls</span>
-            <span id="toolCallsCount" class="panel-count">0 rows</span>
-            <span class="chevron" aria-hidden="true">▸</span>
-          </button>
+          <section class="panel table-panel is-collapsed" data-collapsible="failures">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="failuresPanel"
+                data-target="failuresPanel"
+              >
+                <span class="collapse-title">Failures</span>
+                <span id="failuresCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="failuresPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="failures">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Model</th>
+                      <th>Status</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody id="failuresBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel table-panel is-collapsed" data-collapsible="toolCalls">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="toolCallsPanel"
+                data-target="toolCallsPanel"
+              >
+                <span class="collapse-title">Tool Calls</span>
+                <span id="toolCallsCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="toolCallsPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="toolCalls">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Tool</th>
+                      <th>Model</th>
+                      <th>Args</th>
+                    </tr>
+                  </thead>
+                  <tbody id="toolCallsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
         </div>
-        <div id="toolCallsPanel" class="collapsible-content">
-          <div class="table-wrap">
-          <table data-table="toolCalls">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Tool</th>
-                <th>Model</th>
-                <th>Args</th>
-              </tr>
-            </thead>
-            <tbody id="toolCallsBody"></tbody>
-          </table>
+
+        <!-- Session Detail View (hidden by default) -->
+        <div id="sessionView" class="session-view" style="display: none;">
+          <div class="session-header">
+            <button class="back-btn" id="backToGlobal">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m7 7l-7-7 7-7" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              Back to Global
+            </button>
+            <div class="session-meta">
+              <h2 class="session-title" id="sessionTitle">Session</h2>
+              <div class="session-details" id="sessionDetails"></div>
+            </div>
           </div>
+
+          <section class="session-metrics cards metric-grid" id="sessionMetrics">
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2" fill="currentColor"/><circle cx="17" cy="17" r="2" fill="currentColor"/><circle cx="17" cy="7" r="2" fill="currentColor"/></svg>
+              </div>
+              <span>Requests</span>
+              <strong id="sessionRequestCount">0</strong>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="18" text-anchor="middle" font-size="18" font-weight="bold" fill="currentColor">$</text></svg>
+              </div>
+              <span>Estimated Cost</span>
+              <strong id="sessionCostTotal">$0.0000</strong>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Tokens</span>
+              <strong id="sessionTokenTotal">0</strong>
+              <small id="sessionTokenSplit">0 in / 0 out</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Failures</span>
+              <strong id="sessionFailureCount">0</strong>
+              <small id="sessionFailureRate">0%</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Avg Latency</span>
+              <strong id="sessionAvgLatency">0 ms</strong>
+              <small>window average</small>
+            </article>
+            <article class="metric">
+              <div class="metric-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              </div>
+              <span>Tool Calls</span>
+              <strong id="sessionToolCount">0</strong>
+            </article>
+          </section>
+
+          <div class="session-context-bar-detail">
+            <span class="context-label">Context Usage</span>
+            <div class="context-track">
+              <div class="context-fill" id="sessionContextFill"></div>
+            </div>
+            <span class="context-percentage" id="sessionContextPercent">0%</span>
+          </div>
+
+          <section class="chart-grid">
+            <article class="panel">
+              <div class="panel-head"><h2>Session Tokens Over Time</h2></div>
+              <canvas id="sessionTokensChart" height="260"></canvas>
+            </article>
+          </section>
+
+          <section class="panel table-panel" data-collapsible="sessionRequests">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="true"
+                aria-controls="sessionRequestsPanel"
+                data-target="sessionRequestsPanel"
+              >
+                <span class="collapse-title">Session Requests</span>
+                <span id="sessionRequestsCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="sessionRequestsPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="sessionRequests">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Status</th>
+                      <th>Claude Model</th>
+                      <th>Backend Model</th>
+                      <th>Tokens</th>
+                      <th>Usage</th>
+                      <th>Cost</th>
+                      <th>Latency</th>
+                      <th>Tools</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sessionRequestsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel table-panel" data-collapsible="sessionToolCalls">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="true"
+                aria-controls="sessionToolCallsPanel"
+                data-target="sessionToolCallsPanel"
+              >
+                <span class="collapse-title">Session Tool Calls</span>
+                <span id="sessionToolCallsCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="sessionToolCallsPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="sessionToolCalls">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Tool</th>
+                      <th>Model</th>
+                      <th>Args</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sessionToolCallsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel table-panel" data-collapsible="sessionFailures">
+            <div class="panel-head">
+              <button
+                class="collapse-toggle"
+                type="button"
+                aria-expanded="true"
+                aria-controls="sessionFailuresPanel"
+                data-target="sessionFailuresPanel"
+              >
+                <span class="collapse-title">Session Failures</span>
+                <span id="sessionFailuresCount" class="panel-count">0 rows</span>
+                <span class="chevron" aria-hidden="true">&#9656;</span>
+              </button>
+            </div>
+            <div id="sessionFailuresPanel" class="collapsible-content">
+              <div class="table-wrap">
+                <table data-table="sessionFailures">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Model</th>
+                      <th>Status</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sessionFailuresBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
-    </main>
+      </main>
+    </div>
+
     <script src="/dashboard/assets/dashboard.js"></script>
   </body>
 </html>

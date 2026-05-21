@@ -65,31 +65,61 @@ async def observability_summary(
         "small": config.small_model,
         "vision": config.vision_model,
     }
+    summary["context_limits"] = {
+        "big": config.big_model_context_limit,
+        "middle": config.middle_model_context_limit,
+        "small": config.small_model_context_limit,
+        "vision": config.vision_model_context_limit,
+    }
     summary["pricing"] = observability_recorder.pricing_catalog.as_list()
     return summary
+
+
+@router.get("/api/observability/sessions")
+async def observability_sessions(
+    _: None = Depends(validate_dashboard_api_key),
+):
+    return {"data": observability_recorder.fetch_sessions()}
+
+
+@router.get("/api/observability/sessions/{session_name}/summary")
+async def observability_session_summary(
+    session_name: str,
+    _: None = Depends(validate_dashboard_api_key),
+):
+    return observability_recorder.fetch_session_summary(session_name)
 
 
 @router.get("/api/observability/requests")
 async def observability_requests(
     limit: int = Query(100, ge=1, le=500),
+    session_name: Optional[str] = Query(None),
     _: None = Depends(validate_dashboard_api_key),
 ):
+    if session_name:
+        return {"data": observability_recorder.fetch_requests_by_session(session_name, limit=limit)}
     return {"data": observability_recorder.fetch_requests(limit=limit)}
 
 
 @router.get("/api/observability/failures")
 async def observability_failures(
     limit: int = Query(100, ge=1, le=500),
+    session_name: Optional[str] = Query(None),
     _: None = Depends(validate_dashboard_api_key),
 ):
+    if session_name:
+        return {"data": observability_recorder.fetch_failures_by_session(session_name, limit=limit)}
     return {"data": observability_recorder.fetch_failures(limit=limit)}
 
 
 @router.get("/api/observability/tool-calls")
 async def observability_tool_calls(
     limit: int = Query(100, ge=1, le=500),
+    session_name: Optional[str] = Query(None),
     _: None = Depends(validate_dashboard_api_key),
 ):
+    if session_name:
+        return {"data": observability_recorder.fetch_tool_calls_by_session(session_name, limit=limit)}
     return {"data": observability_recorder.fetch_tool_calls(limit=limit)}
 
 
@@ -102,6 +132,12 @@ async def observability_config(_: None = Depends(validate_dashboard_api_key)):
             "middle": config.middle_model,
             "small": config.small_model,
             "vision": config.vision_model,
+        },
+        "context_limits": {
+            "big": config.big_model_context_limit,
+            "middle": config.middle_model_context_limit,
+            "small": config.small_model_context_limit,
+            "vision": config.vision_model_context_limit,
         },
         "pricing": observability_recorder.pricing_catalog.as_list(),
         "observability_enabled": config.observability_enabled,
@@ -164,22 +200,33 @@ async def observability_context_usage(
 
     backend = usage["backend_model"] or ""
     claude_model = usage["claude_model"] or ""
-    total = usage["total_tokens"] or 0
+    real_total = usage["total_tokens"] or 0
 
-    # Calculate percentage against a 1M context window to align with how
-    # Claude Code /context reports free-space percentage on newer models.
-    CONTEXT_LIMIT = 1_048_576
-    remaining = max(CONTEXT_LIMIT - total, 0)
-    percentage = round((total / CONTEXT_LIMIT) * 100, 2)
+    # Proportional context scaling:
+    # If the real model has a 256K context window and Claude Code
+    # assumes a 1M context window, we scale real usage proportionally.
+    # Example: 100K real usage in 200K window = 500K reported usage.
+    REAL_CONTEXT_LIMIT = _get_context_limit(backend)
+    REPORTED_CONTEXT_LIMIT = 1_048_576
+
+    if REAL_CONTEXT_LIMIT > 0:
+        usage_ratio = real_total / REAL_CONTEXT_LIMIT
+        scaled_total = int(usage_ratio * REPORTED_CONTEXT_LIMIT)
+        percentage = round(usage_ratio * 100, 2)
+    else:
+        scaled_total = 0
+        percentage = 0.0
+
+    remaining = max(REPORTED_CONTEXT_LIMIT - scaled_total, 0)
 
     return {
-        "total_tokens": total,
+        "total_tokens": scaled_total,
         "input_tokens": usage["input_tokens"] or 0,
         "output_tokens": usage["output_tokens"] or 0,
         "cache_read_input_tokens": usage["cache_read_input_tokens"] or 0,
         "cache_creation_input_tokens": usage["cache_creation_input_tokens"] or 0,
         "request_count": usage["request_count"] or 0,
-        "context_limit": CONTEXT_LIMIT,
+        "context_limit": REPORTED_CONTEXT_LIMIT,
         "remaining_tokens": remaining,
         "percentage_used": percentage,
         "percent": percentage,

@@ -337,6 +337,155 @@ class ObservabilityRecorder:
             "request_count": totals["request_count"],
         }
 
+    def fetch_sessions(self) -> List[Dict[str, Any]]:
+        """Return distinct sessions from the requests table."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    session_name,
+                    session_id,
+                    MIN(started_at) AS first_seen,
+                    MAX(started_at) AS last_seen,
+                    COUNT(*) AS total_requests,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(MAX(total_tokens), 0) AS peak_context_tokens,
+                    MAX(backend_model) AS backend_model,
+                    COALESCE(SUM(estimated_cost), 0) AS total_cost
+                FROM requests
+                WHERE session_name IS NOT NULL
+                GROUP BY session_name
+                ORDER BY MAX(started_at_unix) DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fetch_session_series(self, session_name: str, bucket_seconds: int = 300) -> List[Dict[str, Any]]:
+        """Return bucketed time-series data for a single session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    CAST(started_at_unix / ? AS INTEGER) * ? AS bucket,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count
+                FROM requests
+                WHERE session_name = ?
+                GROUP BY bucket
+                ORDER BY bucket ASC
+                """,
+                (bucket_seconds, bucket_seconds, session_name),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "timestamp": datetime.fromtimestamp(row["bucket"], tz=timezone.utc).isoformat(),
+            }
+            for row in rows
+        ]
+
+    def fetch_session_model_stats(self, session_name: str) -> List[Dict[str, Any]]:
+        """Return per-model statistics for a single session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    backend_model,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    AVG(latency_ms) AS avg_latency_ms,
+                    AVG(observed_tok_s) AS avg_observed_tok_s,
+                    MAX(advertised_tok_s) AS advertised_tok_s,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count
+                FROM requests
+                WHERE session_name = ?
+                GROUP BY backend_model
+                ORDER BY request_count DESC
+                """,
+                (session_name,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fetch_session_summary(self, session_name: str) -> Dict[str, Any]:
+        """Return a summary dict with window totals, model_stats, and series for a session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return {}
+        with self._connect() as conn:
+            totals = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    AVG(latency_ms) AS avg_latency_ms,
+                    COALESCE(SUM(tool_call_count), 0) AS tool_call_count
+                FROM requests
+                WHERE session_name = ?
+                """,
+                (session_name,),
+            ).fetchone()
+            if totals["request_count"] == 0:
+                return {}
+        series = self.fetch_session_series(session_name, bucket_seconds=300)
+        model_stats = self.fetch_session_model_stats(session_name)
+        return {
+            "enabled": self.enabled,
+            "session_name": session_name,
+            "window": dict(totals),
+            "series": series,
+            "model_stats": model_stats,
+        }
+
+    def fetch_requests_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT *
+            FROM requests
+            WHERE session_name = ?
+            ORDER BY started_at_unix DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
+    def fetch_failures_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT *
+            FROM requests
+            WHERE session_name = ? AND status != 'success'
+            ORDER BY started_at_unix DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
+    def fetch_tool_calls_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT tool_calls.*, requests.backend_model, requests.status AS request_status
+            FROM tool_calls
+            LEFT JOIN requests ON requests.request_id = tool_calls.request_id
+            WHERE requests.session_name = ?
+            ORDER BY tool_calls.id DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
     def _empty_summary(self, hours: int) -> Dict[str, Any]:
         return {
             "enabled": self.enabled,
