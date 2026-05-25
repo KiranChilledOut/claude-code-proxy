@@ -577,7 +577,8 @@ class ObservabilityRecorder:
                     error_type TEXT,
                     error_message TEXT,
                     tool_call_count INTEGER NOT NULL DEFAULT 0,
-                    session_id TEXT
+                    session_id TEXT,
+                    session_name TEXT
                 )
                 """
             )

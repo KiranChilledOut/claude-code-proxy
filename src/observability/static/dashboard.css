@@ -170,7 +170,7 @@ body {
 /* ------------------------------------------------------------
    4. Keyframe Animations
    ------------------------------------------------------------ */
-@keyframes livePulse {
+@keyframes live-pulse {
   0%,
   100% {
     transform: scale(1);
@@ -191,7 +191,7 @@ body {
   }
 }
 
-@keyframes fadeInUp {
+@keyframes fade-in-up {
   from {
     opacity: 0;
     transform: translateY(8px);
@@ -339,7 +339,7 @@ body {
   border-radius: 50%;
   background: var(--accent-green);
   display: inline-block;
-  animation: livePulse 2s ease-in-out infinite;
+  animation: live-pulse 2s ease-in-out infinite;
 }
 
 /* Session skeleton (loading state) */
@@ -566,7 +566,7 @@ body {
 /* Staggered fade-in */
 .metric,
 .panel {
-  animation: fadeInUp 0.4s ease forwards;
+  animation: fade-in-up 0.4s ease forwards;
 }
 
 .metric:nth-child(1) {
@@ -862,7 +862,7 @@ tbody tr:hover {
   font-family: inherit;
 }
 
-column-filter:focus {
+.column-filter:focus {
   border-color: var(--accent-blue);
   outline: none;
 }

@@ -8,7 +8,6 @@ Example: python3 session_forwarder.py 50001 localhost:8083 bugfix-27
 
 import http.client
 import http.server
-import select
 import socketserver
 import sys
 import urllib.parse

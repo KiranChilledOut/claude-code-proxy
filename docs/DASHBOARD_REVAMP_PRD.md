@@ -147,7 +147,7 @@ Redesign the Claude Code Proxy observability dashboard from a single-page metric
 4. Modify `GET /api/observability/tool-calls`
    - Join via request_id, same session filtering.
 
-5. `GET /api/observability/session/{session_name}/summary`
+5. `GET /api/observability/session/{session_id}/summary`
    - Returns per-session aggregated metrics (token count, cost, latency averages) AND the bucketed time series data for sparklines.
 
 ### Frontend Architecture Changes
@@ -192,7 +192,7 @@ SELECT
     MAX(backend_model) AS backend_model
 FROM requests
 WHERE session_name IS NOT NULL
-GROUP BY session_name
+GROUP BY session_name, session_id
 ORDER BY MAX(started_at_unix) DESC;
 ```
 

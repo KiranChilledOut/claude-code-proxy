@@ -295,6 +295,7 @@ class ChartController {
     this.charts.set(canvas, { rows, opts });
     // Clean stale listeners by cloning and replacing
     const newCanvas = canvas.cloneNode(true);
+    this.charts.delete(canvas);
     canvas.parentNode.replaceChild(newCanvas, canvas);
     this.charts.set(newCanvas, { rows, opts });
     this._attachListeners(newCanvas, rows, opts);

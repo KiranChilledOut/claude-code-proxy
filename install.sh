@@ -325,7 +325,7 @@ claude() {
             unset ANTHROPIC_API_KEY
             export ANTHROPIC_AUTH_TOKEN="claude-local"
             export ANTHROPIC_BASE_URL="\$forwarder_url"
-            [ -n "${_ctx_limit}" ] && [ "${_ctx_limit}" -lt 1000000 ] && export ANTHROPIC_MODEL="claude-opus-4-7"
+            [ -n "${_ctx_limit}" ] && [ "${_ctx_limit}" -gt 0 ] && [ "${_ctx_limit}" -lt 1000000 ] && export ANTHROPIC_MODEL="claude-opus-4-7"
             command claude "\${@:2}"
         )
         local claude_exit=\$?
@@ -400,7 +400,7 @@ function claude {
             \$env:ANTHROPIC_AUTH_TOKEN = "claude-local"
             Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
             \$env:ANTHROPIC_BASE_URL = \$forwarderUrl
-            if (${_ctx_limit} -and ${_ctx_limit} -lt 1000000) { \$env:ANTHROPIC_MODEL = "claude-opus-4-7" }
+            if (${_ctx_limit} -gt 0 -and ${_ctx_limit} -lt 1000000) { \$env:ANTHROPIC_MODEL = "claude-opus-4-7" }
             & \$claudeCommand @remainingArgs
         } finally {
             # Clean up forwarder
