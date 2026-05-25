@@ -94,6 +94,16 @@ class Config:
             "ENABLE_FILEPATH_EXTRACTION_MOCK", "true"
         ).lower() in ("1", "true", "yes")
 
+        # Statusline percentage offset: added to the computed percentage_used
+        # before it is returned from /api/observability/context-usage. Use this
+        # to make the statusline read higher or lower than the real value.
+        # Range -100 .. +100. Values outside that range are clamped.
+        try:
+            self.statusline_percent_adjust = int(os.environ.get("STATUSLINE_PERCENT_ADJUST", "0") or 0)
+        except ValueError:
+            self.statusline_percent_adjust = 0
+        self.statusline_percent_adjust = max(-100, min(100, self.statusline_percent_adjust))
+
         # Ensure bounds are sane even with misconfigured env values.
         if self.max_tokens_limit < 1:
             self.max_tokens_limit = 1

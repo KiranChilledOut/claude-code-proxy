@@ -94,6 +94,8 @@ def _stream_usage_with_fallback(stream_metrics: dict, estimated_input_tokens: in
 def _record_message_observability(
     *,
     request_id: str,
+    session_id: Optional[str] = None,
+    session_name: Optional[str] = None,
     started_at: str,
     started_at_unix: float,
     start_monotonic: float,
@@ -110,6 +112,8 @@ def _record_message_observability(
 ) -> None:
     observability_recorder.record_request(
         request_id=request_id,
+        session_id=session_id,
+        session_name=session_name,
         started_at=started_at,
         started_at_unix=started_at_unix,
         completed_at=_utc_now_iso(),
@@ -174,7 +178,12 @@ async def create_message(
         if beta_header:
             logger.info(f"anthropic-beta header: {beta_header}")
 
-        logger.debug(f"Processing Claude request: model={request.model}, stream={request.stream}")
+        session_id = http_request.headers.get("x-claude-code-session-id")
+        session_name = http_request.headers.get("x-session-name")
+        if session_id:
+            logger.debug(f"x-claude-code-session-id: {session_id}")
+
+        logger.debug(f"Incoming headers: dict({dict(http_request.headers)})")
 
         # Check if client disconnected before doing either local work or upstream calls.
         if await http_request.is_disconnected():
@@ -187,6 +196,8 @@ async def create_message(
             observability_usage["source"] = "local_optimization"
             _record_message_observability(
                 request_id=request_id,
+                session_id=session_id,
+                session_name=session_name,
                 started_at=started_at,
                 started_at_unix=started_at_unix,
                 start_monotonic=start_monotonic,
@@ -255,6 +266,8 @@ async def create_message(
                     finally:
                         _record_message_observability(
                             request_id=request_id,
+                            session_id=session_id,
+                            session_name=session_name,
                             started_at=started_at,
                             started_at_unix=started_at_unix,
                             start_monotonic=start_monotonic,
@@ -295,6 +308,8 @@ async def create_message(
                 }
                 _record_message_observability(
                     request_id=request_id,
+                    session_id=session_id,
+                    session_name=session_name,
                     started_at=started_at,
                     started_at_unix=started_at_unix,
                     start_monotonic=start_monotonic,
@@ -313,6 +328,8 @@ async def create_message(
             claude_response = convert_openai_to_claude_response(openai_response, request)
             _record_message_observability(
                 request_id=request_id,
+                session_id=session_id,
+                session_name=session_name,
                 started_at=started_at,
                 started_at_unix=started_at_unix,
                 start_monotonic=start_monotonic,
@@ -329,6 +346,8 @@ async def create_message(
     except HTTPException as e:
         _record_message_observability(
             request_id=request_id,
+            session_id=session_id,
+            session_name=session_name,
             started_at=started_at,
             started_at_unix=started_at_unix,
             start_monotonic=start_monotonic,
@@ -349,6 +368,8 @@ async def create_message(
         error_message = openai_client.classify_openai_error(str(e))
         _record_message_observability(
             request_id=request_id,
+            session_id=session_id,
+            session_name=session_name,
             started_at=started_at,
             started_at_unix=started_at_unix,
             start_monotonic=start_monotonic,

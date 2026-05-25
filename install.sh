@@ -140,6 +140,8 @@ trap cleanup EXIT
 
 PORT="$(grep -E '^PORT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '"' || echo 8083)"
 PORT="${PORT:-8083}"
+BIG_LIMIT="$(grep -E '^BIG_MODEL_CONTEXT_LIMIT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '"' || echo 0)"
+BIG_LIMIT="${BIG_LIMIT:-0}"
 
 for _ in $(seq 1 30); do
   if curl -sf -m 2 "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
@@ -286,21 +288,53 @@ prepare_shell_profile() {
 }
 
 append_posix_shell_function() {
-    # Use resolved PORT to avoid foot-gun with env variable collisions.
+    # REPO_ROOT is already absolute at this point (set line 31)
+    local _repo_root="$REPO_ROOT"
+    local _ctx_limit="${BIG_LIMIT:-0}"
     cat >> "$SHELL_RC" <<SHELL_FUNC
 
 # Claude Shell Function — enables claude, claude --proxy, and claudius
+# Per-session forwarder: each --proxy run gets a unique port + session name
 claude() {
-    local proxy_url="http://localhost:${PORT}"
+    local main_proxy="http://localhost:${PORT}"
+    local repo_root="${_repo_root}"
 
     if [[ "\$1" == "--proxy" ]]; then
         printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ bearer auth via local proxy\033[0m\n"
+
+        # Prompt for a session name (pre-fill with timestamp)
+        local default_name
+        default_name="session-\$(date +%Y%m%d-%H%M%S)"
+        printf "\033[38;5;244mSession name\033[0m [\033[38;5;75m%s\033[0m]: " "\$default_name"
+        read -r session_name
+        session_name="\${session_name:-\$default_name}"
+
+        # Pick a random free port
+        local local_port
+        local_port=\$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+
+        # Start the forwarder in the background
+        python3 "\$repo_root/scripts/session_forwarder.py" "\$local_port" "localhost:${PORT}" "\$session_name" &
+        local forwarder_pid=\$!
+
+        # Wait a moment for the forwarder to bind
+        sleep 0.5
+
+        local forwarder_url="http://localhost:\$local_port"
         (
             unset ANTHROPIC_API_KEY
             export ANTHROPIC_AUTH_TOKEN="claude-local"
-            export ANTHROPIC_BASE_URL="\$proxy_url"
+            export ANTHROPIC_BASE_URL="\$forwarder_url"
+            [ -n "${_ctx_limit}" ] && [ "${_ctx_limit}" -gt 0 ] && [ "${_ctx_limit}" -lt 1000000 ] && export ANTHROPIC_MODEL="claude-opus-4-7"
             command claude "\${@:2}"
         )
+        local claude_exit=\$?
+
+        # Clean up forwarder
+        kill "\$forwarder_pid" 2>/dev/null || true
+        wait "\$forwarder_pid" 2>/dev/null || true
+
+        return \$claude_exit
     else
         printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
         (
@@ -316,17 +350,20 @@ SHELL_FUNC
 }
 
 append_pwsh_shell_function() {
-    # Use resolved PORT to avoid foot-gun with env variable collisions.
+    local _repo_root="$REPO_ROOT"
+    local _ctx_limit="${BIG_LIMIT:-0}"
     cat >> "$SHELL_RC" <<PWSH_FUNC
 
 # Claude Shell Function - enables claude, claude --proxy, and claudius
+# Per-session forwarder: each --proxy run gets a unique port + session name
 function claude {
     param(
         [Parameter(ValueFromRemainingArguments = \$true)]
         [string[]] \$ClaudeArgs
     )
 
-    \$proxyUrl = "http://localhost:${PORT}"
+    \$mainProxy = "http://localhost:${PORT}"
+    \$repoRoot = "${_repo_root}"
     \$claudeCommand = (Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     \$oldAuthToken = \$env:ANTHROPIC_AUTH_TOKEN
     \$oldApiKey = \$env:ANTHROPIC_API_KEY
@@ -334,17 +371,43 @@ function claude {
 
     if (\$ClaudeArgs.Count -gt 0 -and \$ClaudeArgs[0] -eq "--proxy") {
         Write-Host "\`e[38;5;129m▐▛▜▌ Claude via Proxy\`e[0m  \`e[38;5;244m-> bearer auth via local proxy\`e[0m"
+
+        # Prompt for session name
+        \$defaultName = "session-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+        Write-Host "Session name [\`e[38;5;75m\$defaultName\`e[0m]: " -NoNewline
+        [string] \$sessionName = Read-Host
+        if ([string]::IsNullOrWhiteSpace(\$sessionName)) { \$sessionName = \$defaultName }
+
+        # Pick random free port
+        [int] \$localPort = python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()"
+
+        # Start forwarder
+        \$forwarderJob = Start-Job -ScriptBlock {
+            param(\$port, \$target, \$name, \$repo)
+            python3 "\$repo/scripts/session_forwarder.py" \$port \$target \$name
+        } -ArgumentList \$localPort, "localhost:${PORT}", \$sessionName, \$repoRoot
+
+        # Wait for forwarder to bind
+        Start-Sleep -Milliseconds 800
+
         [string[]] \$remainingArgs = @()
         if (\$ClaudeArgs.Count -gt 1) {
             \$remainingArgs = [string[]] \$ClaudeArgs[1..(\$ClaudeArgs.Count - 1)]
         }
 
+        \$forwarderUrl = "http://localhost:\$localPort"
         try {
             \$env:ANTHROPIC_AUTH_TOKEN = "claude-local"
             Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
-            \$env:ANTHROPIC_BASE_URL = \$proxyUrl
+            \$env:ANTHROPIC_BASE_URL = \$forwarderUrl
+            if (${_ctx_limit} -gt 0 -and ${_ctx_limit} -lt 1000000) { \$env:ANTHROPIC_MODEL = "claude-opus-4-7" }
             & \$claudeCommand @remainingArgs
         } finally {
+            # Clean up forwarder
+            if (\$forwarderJob) {
+                Stop-Job \$forwarderJob -ErrorAction SilentlyContinue
+                Remove-Job \$forwarderJob -ErrorAction SilentlyContinue
+            }
             if (\$null -eq \$oldAuthToken) { Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_AUTH_TOKEN = \$oldAuthToken }
             if (\$null -eq \$oldApiKey) { Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_API_KEY = \$oldApiKey }
             if (\$null -eq \$oldBaseUrl) { Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue } else { \$env:ANTHROPIC_BASE_URL = \$oldBaseUrl }

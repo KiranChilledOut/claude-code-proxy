@@ -61,6 +61,8 @@ class ObservabilityRecorder:
         self,
         *,
         request_id: str,
+        session_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         started_at: str,
         started_at_unix: float,
         completed_at: Optional[str],
@@ -103,6 +105,8 @@ class ObservabilityRecorder:
             "kind": "request",
             "request": {
                 "request_id": request_id,
+                "session_id": session_id,
+                "session_name": session_name,
                 "started_at": started_at,
                 "started_at_unix": started_at_unix,
                 "completed_at": completed_at,
@@ -228,6 +232,258 @@ class ObservabilityRecorder:
             (max(1, min(limit, 500)),),
         )
 
+    def fetch_latest_session_id(self) -> Optional[str]:
+        if not self.enabled or not Path(self.db_path).exists():
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id
+                FROM requests
+                WHERE session_id IS NOT NULL
+                ORDER BY started_at_unix DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return row["session_id"] if row else None
+
+    def fetch_context_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled or not Path(self.db_path).exists():
+            return None
+
+        with self._connect() as conn:
+            # Latest non-zero request: use the most recent request with actual
+            # token usage so that context reflects the *current* state after
+            # Claude Code autocompacts, rather than the all-time peak (MAX).
+            # Local-optimisation (0-token) requests are excluded.
+            latest = conn.execute(
+                """
+                SELECT claude_model, backend_model, completed_at,
+                       total_tokens, input_tokens, output_tokens
+                FROM requests
+                WHERE session_id = ? AND status = 'success' AND total_tokens > 0
+                ORDER BY started_at_unix DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if latest is None:
+                return None
+
+            totals = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+                    COUNT(*) AS request_count
+                FROM requests
+                WHERE session_id = ? AND status = 'success'
+                """,
+                (session_id,),
+            ).fetchone()
+
+        return {
+            "claude_model": latest["claude_model"],
+            "backend_model": latest["backend_model"],
+            "total_tokens": latest["total_tokens"] or 0,
+            "input_tokens": latest["input_tokens"] or 0,
+            "output_tokens": latest["output_tokens"] or 0,
+            "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
+            "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
+            "request_count": totals["request_count"],
+        }
+
+    def fetch_context_usage_by_name(self, session_name: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled or not Path(self.db_path).exists():
+            return None
+
+        with self._connect() as conn:
+            latest = conn.execute(
+                """
+                SELECT claude_model, backend_model, completed_at,
+                       total_tokens, input_tokens, output_tokens
+                FROM requests
+                WHERE session_name = ? AND status = 'success' AND total_tokens > 0
+                ORDER BY started_at_unix DESC
+                LIMIT 1
+                """,
+                (session_name,),
+            ).fetchone()
+            if latest is None:
+                return None
+
+            totals = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+                    COUNT(*) AS request_count
+                FROM requests
+                WHERE session_name = ? AND status = 'success'
+                """,
+                (session_name,),
+            ).fetchone()
+
+        return {
+            "claude_model": latest["claude_model"],
+            "backend_model": latest["backend_model"],
+            "total_tokens": latest["total_tokens"] or 0,
+            "input_tokens": latest["input_tokens"] or 0,
+            "output_tokens": latest["output_tokens"] or 0,
+            "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
+            "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
+            "request_count": totals["request_count"],
+        }
+
+    def fetch_sessions(self) -> List[Dict[str, Any]]:
+        """Return distinct sessions from the requests table."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    session_name,
+                    session_id,
+                    MIN(started_at) AS first_seen,
+                    MAX(started_at) AS last_seen,
+                    COUNT(*) AS total_requests,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(MAX(total_tokens), 0) AS peak_context_tokens,
+                    MAX(backend_model) AS backend_model,
+                    COALESCE(SUM(estimated_cost), 0) AS total_cost
+                FROM requests
+                WHERE session_name IS NOT NULL
+                GROUP BY session_name
+                ORDER BY MAX(started_at_unix) DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fetch_session_series(self, session_name: str, bucket_seconds: int = 300) -> List[Dict[str, Any]]:
+        """Return bucketed time-series data for a single session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    CAST(started_at_unix / ? AS INTEGER) * ? AS bucket,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count
+                FROM requests
+                WHERE session_name = ?
+                GROUP BY bucket
+                ORDER BY bucket ASC
+                """,
+                (bucket_seconds, bucket_seconds, session_name),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "timestamp": datetime.fromtimestamp(row["bucket"], tz=timezone.utc).isoformat(),
+            }
+            for row in rows
+        ]
+
+    def fetch_session_model_stats(self, session_name: str) -> List[Dict[str, Any]]:
+        """Return per-model statistics for a single session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    backend_model,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    AVG(latency_ms) AS avg_latency_ms,
+                    AVG(observed_tok_s) AS avg_observed_tok_s,
+                    MAX(advertised_tok_s) AS advertised_tok_s,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count
+                FROM requests
+                WHERE session_name = ?
+                GROUP BY backend_model
+                ORDER BY request_count DESC
+                """,
+                (session_name,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fetch_session_summary(self, session_name: str) -> Dict[str, Any]:
+        """Return a summary dict with window totals, model_stats, and series for a session."""
+        if not self.enabled or not Path(self.db_path).exists():
+            return {}
+        with self._connect() as conn:
+            totals = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0) AS failure_count,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
+                    AVG(latency_ms) AS avg_latency_ms,
+                    COALESCE(SUM(tool_call_count), 0) AS tool_call_count
+                FROM requests
+                WHERE session_name = ?
+                """,
+                (session_name,),
+            ).fetchone()
+            if totals["request_count"] == 0:
+                return {}
+        series = self.fetch_session_series(session_name, bucket_seconds=300)
+        model_stats = self.fetch_session_model_stats(session_name)
+        return {
+            "enabled": self.enabled,
+            "session_name": session_name,
+            "window": dict(totals),
+            "series": series,
+            "model_stats": model_stats,
+        }
+
+    def fetch_requests_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT *
+            FROM requests
+            WHERE session_name = ?
+            ORDER BY started_at_unix DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
+    def fetch_failures_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT *
+            FROM requests
+            WHERE session_name = ? AND status != 'success'
+            ORDER BY started_at_unix DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
+    def fetch_tool_calls_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+        return self._fetch_rows(
+            """
+            SELECT tool_calls.*, requests.backend_model, requests.status AS request_status
+            FROM tool_calls
+            LEFT JOIN requests ON requests.request_id = tool_calls.request_id
+            WHERE requests.session_name = ?
+            ORDER BY tool_calls.id DESC
+            LIMIT ?
+            """,
+            (session_name, max(1, min(limit, 500))),
+        )
+
     def _empty_summary(self, hours: int) -> Dict[str, Any]:
         return {
             "enabled": self.enabled,
@@ -320,7 +576,9 @@ class ObservabilityRecorder:
                     observed_tok_s REAL,
                     error_type TEXT,
                     error_message TEXT,
-                    tool_call_count INTEGER NOT NULL DEFAULT 0
+                    tool_call_count INTEGER NOT NULL DEFAULT 0,
+                    session_id TEXT,
+                    session_name TEXT
                 )
                 """
             )
@@ -329,6 +587,24 @@ class ObservabilityRecorder:
                 "requests",
                 "usage_source",
                 "TEXT NOT NULL DEFAULT 'provider'",
+            )
+            self._ensure_column(
+                conn,
+                "requests",
+                "session_id",
+                "TEXT",
+            )
+            self._ensure_column(
+                conn,
+                "requests",
+                "session_name",
+                "TEXT",
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_session_name ON requests(session_name)"
             )
             conn.execute(
                 """
@@ -359,7 +635,7 @@ class ObservabilityRecorder:
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO requests (
-                        request_id, started_at, started_at_unix, completed_at, base_url,
+                        request_id, session_id, session_name, started_at, started_at_unix, completed_at, base_url,
                         claude_model, backend_model, stream, status, http_status,
                         stop_reason, latency_ms, input_tokens, output_tokens,
                         cache_creation_input_tokens, cache_read_input_tokens, usage_source, total_tokens,
@@ -367,7 +643,7 @@ class ObservabilityRecorder:
                         advertised_tok_s, observed_tok_s, error_type, error_message,
                         tool_call_count
                     ) VALUES (
-                        :request_id, :started_at, :started_at_unix, :completed_at, :base_url,
+                        :request_id, :session_id, :session_name, :started_at, :started_at_unix, :completed_at, :base_url,
                         :claude_model, :backend_model, :stream, :status, :http_status,
                         :stop_reason, :latency_ms, :input_tokens, :output_tokens,
                         :cache_creation_input_tokens, :cache_read_input_tokens, :usage_source, :total_tokens,

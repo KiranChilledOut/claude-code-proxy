@@ -187,19 +187,21 @@ proxy. A custom statusline fixes that. Add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; base=\"${ANTHROPIC_BASE_URL%/}\"; cfg=$(curl -fsS --max-time 1 \"$base/api/observability/config\" 2>/dev/null || true); model=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get(\"configured_models\") or {}).get(\"big\") or \"\")' 2>/dev/null || true); obs=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(\"true\" if d.get(\"observability_enabled\") else \"false\")' 2>/dev/null || true); if [ \"$obs\" = \"true\" ] && [ -n \"$model\" ]; then echo \"[nebius://$model] $base/dashboard\"; elif [ -n \"$model\" ]; then echo \"[nebius://$model]\"; else echo \"[proxy://$base]\"; fi"
+    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; base=\"${ANTHROPIC_BASE_URL%/}\"; cfg=$(curl -fsS --max-time 1 \"$base/api/observability/config\" 2>/dev/null || true); model=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get(\"configured_models\") or {}).get(\"big\") or \"\")' 2>/dev/null || true); ctx=$(curl -fsS --max-time 1 \"$base/api/observability/context-usage\" 2>/dev/null || true); free=$(printf '%s' \"$ctx\" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get(\"remaining_tokens\",1048576) or 1048576; t=d.get(\"context_limit\",1048576) or 1048576; print(f\"{round((r/t)*100)}\")' 2>/dev/null || true); if [ -n \"$model\" ]; then if [ -n \"$free\" ] && [[ \"$free\" =~ ^[0-9]+$ ]]; then if [ \"$free\" -le 20 ]; then c=\"\\033[31m\"; elif [ \"$free\" -le 40 ]; then c=\"\\033[38;5;208m\"; elif [ \"$free\" -le 50 ]; then c=\"\\033[33m\"; else c=\"\\033[32m\"; fi; e=\"\\033[0m\"; echo \"[nebius://$model $c${free}% free$e] $base/dashboard\"; else echo \"[nebius://$model] $base/dashboard\"; fi; else echo \"[proxy://$base]\"; fi"
   }
 }
 ```
 
-The command reads config from the running proxy, so it does not need to know
-where the proxy repo is checked out. Behavior:
+**How it works:** When using `claude --proxy`, each session runs through a
+unique local forwarder port. The statusline queries `context-usage` on that
+port, so each session sees its own percentage — no cross-contamination.
+
+**Behavior:**
 
 - Bare `claude` (no proxy) → statusline is blank, no clutter.
-- Proxy-routed + observability enabled → statusline shows e.g. `[nebius://MiniMax-M2.5] http://localhost:8083/dashboard`.
-- Proxy-routed + observability disabled → statusline shows e.g. `[nebius://MiniMax-M2.5]`.
-- If the proxy config endpoint is unreachable → falls back to `[proxy://<ANTHROPIC_BASE_URL>]`
-  so you still know an interceptor is active.
+- Proxy-routed + data available → e.g. `[nebius://MiniMax-M2.5 96% free] http://localhost:50001/dashboard`.
+- Proxy-routed + no data yet → e.g. `[nebius://MiniMax-M2.5] http://localhost:50001/dashboard`.
+- If the proxy is unreachable → falls back to `[proxy://<base>]`.
 
 The command is read at session start, so re-open Claude Code after editing
 `settings.json`.
