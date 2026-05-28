@@ -138,7 +138,7 @@ class WelcomeScreen(Screen):
                 "    ────────────────────────\n",
                 classes="banner",
             )
-            yield Static("powered by Nebius", classes="subtitle")
+            yield Static("powered by Nebius Token Factory", classes="subtitle")
             yield Static("", classes="info_label")
             yield Markdown(
                 ""
