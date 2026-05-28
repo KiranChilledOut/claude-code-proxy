@@ -18,7 +18,6 @@ function fmtMs(value) {
 
 function fmtMoney(value, currency = "USD") {
   if (value === null || value === undefined) return "not configured";
-  if (Number(value) === 0) return "free";
   const prefix = currency === "USD" ? "$" : `${currency} `;
   return `${prefix}${Number(value).toFixed(6)}`;
 }

@@ -1,94 +1,41 @@
-# Claude Shell Function Configuration
+# Claude Shell Function Reference
 
-This document describes the shell functions that enable easy switching between **direct** (subscription auth) and **proxy** (local Nebius proxy) connections.
+The TUI installer (`./install.sh`) can automatically append the most recent version of these functions to your shell profile (`~/.zshrc`, `~/.bashrc`, or PowerShell `$PROFILE`).
 
-## Quick Start
-
-For zsh or bash, add the following to your `~/.zshrc` or `~/.bashrc`:
-
-```bash
-# Claude Shell Function — enables claude, claude --proxy, and claudius
-claude() {
-    local proxy_url="http://localhost:8083"
-
-    if [[ "$1" == "--proxy" ]] || [[ "$1" == "claudius" ]]; then
-        printf "\033[38;5;129m▐▛▜▌ Claude via Proxy\033[0m  \033[38;5;244m→ bearer auth via local proxy\033[0m\n"
-        (
-            unset ANTHROPIC_API_KEY
-            export ANTHROPIC_AUTH_TOKEN="claude-local"
-            export ANTHROPIC_BASE_URL="$proxy_url"
-            command claude "${@:2}"
-        )
-    else
-        printf "\033[38;5;46m▐▛▜▌ Claude Direct\033[0m  \033[38;5;244m→ subscription login auth\033[0m\n"
-        (
-            unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
-            command claude "$@"
-        )
-    fi
-}
-
-# Alias for users who prefer claudius --proxy style
-alias claudius='claude --proxy'
-```
-
-Then restart your shell or run: `source ~/.zshrc` (or `~/.bashrc`)
-
-For PowerShell (`pwsh`), run `./install.sh` from PowerShell and accept the
-prompt. The installer writes a native PowerShell function to `$PROFILE`.
-Restart PowerShell or run:
-
-```powershell
-. $PROFILE
-```
+What the installed function does:
+- `claude` — direct subscription login (no proxy)
+- `claude --proxy` — routes through the local Nebius proxy via a per-session forwarder
+- `claudius` — alias for `claude --proxy`
 
 ## Usage
 
 | Command | Description |
 |---------|-------------|
-| `claude` | Direct connection using your subscription login |
-| `claude --proxy` | Connect via local proxy (Nebius API) |
-| `claude --proxy <prompt>` | Proxy connection with a prompt |
+| `claude` | Direct Claude Code (subscription login) |
+| `claude --proxy` | Proxy mode via Nebius with session forwarder |
+| `claude --proxy <dir>` | Proxy mode starting in a specific directory |
 | `claudius` | Alias for `claude --proxy` |
-| `claudius <prompt>` | Alias for `claude --proxy <prompt>` |
 
-## Requirements
+## Session Forwarder
 
-- **For direct mode**: Valid Claude subscription with login credentials
-- **For proxy mode**: The proxy must be running (`python start_proxy.py` in the project directory)
+The installed bash/zsh function uses `scripts/session_forwarder.py` to spin up a temporary forwarder on a random free port for each proxy session. This gives the statusline independent per-session metrics. When Claude Code exits, the forwarder is cleaned up automatically.
+
+The PowerShell function uses `Start-Job` for equivalent behaviour.
 
 ## Visual Feedback
 
-When you run a command, you'll see a colored indicator:
-
-- **Green** (`▐▛▜▌ Claude Direct`) = Direct subscription connection
-- **Purple** (`▐▛▜▌ Claude via Proxy`) = Local proxy connection (Nebius)
+- **Green** (`▐▛▜▌ Claude Direct`) = Subscription login mode
+- **Purple** (`▐▛▜▌ Claude via Proxy`) = Proxy mode via Nebius
 
 ## Troubleshooting
 
 ### Proxy not running?
 
 ```bash
-# Start the proxy
 cd /path/to/claude-code-proxy
 .venv/bin/python start_proxy.py
 ```
 
 ### Port different from 8083?
 
-Edit the `proxy_url` variable in the function:
-
-```bash
-local proxy_url="http://localhost:9090"  # Your custom port
-```
-
-## Auto-Installation
-
-The `install.sh` script can automatically configure this for zsh, bash, or
-PowerShell. Run:
-
-```bash
-./install.sh
-```
-
-and it will prompt you to add the shell function to your profile.
+Re-run `./install.sh` and enter your custom port on the API Key & Port step.

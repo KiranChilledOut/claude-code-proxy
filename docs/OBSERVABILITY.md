@@ -17,7 +17,7 @@ OBSERVABILITY_ENABLED=true
 OBSERVABILITY_DB_PATH=/app/data/observability.sqlite3
 OBSERVABILITY_QUEUE_SIZE=1000
 OBSERVABILITY_STORE_TOOL_ARGS=false
-MODEL_PRICES_JSON='{"zai-org/GLM-4.7-FP8":{"input_per_1m":0.30,"output_per_1m":1.20,"advertised_tok_s":36.8,"currency":"USD"}}'
+MODEL_PRICES_JSON='{"moonshotai/Kimi-K2.6":{"input_per_1m":0.95,"output_per_1m":4.00,"advertised_tok_s":60,"currency":"USD"}}'
 ```
 
 Pricing is env-configured only. If a backend model is missing from
