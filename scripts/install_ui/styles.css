@@ -1,0 +1,130 @@
+# ── Base screen layout ─────────────────────────────────────────
+Screen {
+    align: center middle;
+}
+
+Static.step_header {
+    width: 100%;
+    content-align: center middle;
+    color: rgb(0,188,212);
+    text-style: bold;
+    height: 3;
+}
+
+Static.subtitle {
+    text-align: center;
+    color: rgb(156,39,176);
+    text-style: bold;
+    height: 2;
+}
+
+# ── Content panels ─────────────────────────────────────────────
+.content_panel {
+    width: 80;
+    height: auto;
+    border: solid #1f1f1f;
+    padding: 1 2;
+}
+
+Static.banner {
+    text-align: center;
+    color: rgb(0,188,212);
+    text-style: bold;
+}
+
+Static.info_label {
+    text-align: left;
+    width: 100%;
+}
+
+Static.success_label {
+    text-align: center;
+    color: rgb(76,175,80);
+    text-style: bold;
+    width: 100%;
+}
+
+Static.hint_label {
+    text-align: left;
+    color: rgb(136,136,136);
+    width: 100%;
+}
+
+Static.form_label {
+    text-align: left;
+    text-style: bold;
+    width: 100%;
+    margin-top: 1;
+}
+
+# ── Buttons ────────────────────────────────────────────────────
+.button_bar {
+    layout: horizontal;
+    height: auto;
+    align: center middle;
+    margin-top: 1;
+}
+
+Button {
+    margin: 0 1;
+}
+
+# ── Form inputs ────────────────────────────────────────────────
+Input {
+    width: 50;
+    border: tall #404040;
+    padding: 0 1;
+}
+
+Input:focus {
+    border: tall rgb(0,188,212);
+}
+
+Checkbox {
+    width: 100%;
+    margin-top: 1;
+}
+
+# ── Progress ───────────────────────────────────────────────────
+ProgressBar {
+    width: 60;
+    margin: 1 4;
+}
+
+# ── Log panes ──────────────────────────────────────────────────
+RichLog {
+    width: 76;
+    height: 12;
+    border: solid #1f1f1f;
+    background: #080808;
+    padding: 0 1;
+}
+
+# ── Review block ─────────────────────────────────────────────
+Markdown {
+    width: 76;
+    height: auto;
+}
+
+# ── Modal ──────────────────────────────────────────────────────
+OverwriteStatuslineModal > Container {
+    width: 60;
+    height: auto;
+    border: solid #8B6914;
+    padding: 1 2;
+    background: #171717;
+}
+
+OverwriteStatuslineModal .modal_title {
+    color: rgb(255,193,7);
+    text-align: center;
+    text-style: bold;
+    width: 100%;
+    height: 2;
+}
+
+OverwriteStatuslineModal .modal_text {
+    text-align: center;
+    color: rgb(200,200,200);
+    width: 100%;
+}

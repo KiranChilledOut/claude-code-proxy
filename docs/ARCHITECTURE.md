@@ -43,9 +43,9 @@ Core environment variables:
 ```bash
 OPENAI_API_KEY=<nebius-key>
 OPENAI_BASE_URL=https://api.tokenfactory.nebius.com/v1
-BIG_MODEL=zai-org/GLM-4.5
-MIDDLE_MODEL=zai-org/GLM-4.5
-SMALL_MODEL=zai-org/GLM-4.5
+BIG_MODEL=moonshotai/Kimi-K2.6
+MIDDLE_MODEL=moonshotai/Kimi-K2.6
+SMALL_MODEL=moonshotai/Kimi-K2.6
 VISION_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
 ```
 

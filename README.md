@@ -1,275 +1,99 @@
 # Claude Code Proxy for Nebius
 
-This repository contains a Nebius-focused Claude API proxy plus bundled MCP servers for local tool integration.
+A Claude Code → Nebius bridge. Accepts Claude-Code requests, converts to OpenAI-compatible requests, and converts responses back. Includes bundled MCP servers for local tools.
 
-The proxy accepts Claude-compatible requests from Claude Code, translates them into OpenAI-compatible requests for Nebius-backed models, and converts responses back into Claude format. The repository also includes bundled MCP servers under `MCP/`.
+## Quick Start (the easy way)
 
-## Table of Contents
+One step. Run the installer:
 
-- [Repository Layout](#repository-layout)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [MCP Support](#mcp-support)
-- [Testing](#testing)
-- [Observability](#observability)
-- [Development](#development)
-- [Documentation](#documentation)
-- [Scope](#scope)
-- [License](#license)
-
-## Repository Layout
-
-```text
-claude-code-proxy/
-├── src/                      # Proxy implementation
-├── tests/                    # Automated tests
-├── docs/                     # Architecture and integration docs
-├── MCP/                      # Bundled MCP servers
-├── scripts/                  # Developer utilities
-├── start_proxy.py            # Local convenience launcher
-├── .mcp.json                 # Project-level Claude Code MCP config
-├── pyproject.toml            # Python package metadata
-└── README.md
+```bash
+./install.sh
 ```
 
-## Features
+This launches a step-by-step TUI that:
+1. Checks prerequisites
+2. Creates a virtual environment
+3. Installs dependencies
+4. Tests your Nebius API key
+5. Lets you pick models from live dropdowns
+6. Writes your `.env` file
+7. Runs a smoke test
+8. Optionally adds `claude` / `claudius` shell shortcuts
+9. Optionally configures Claude Code statusline
 
-- Claude `/v1/messages` proxying to Nebius OpenAI-compatible endpoints
-- Claude-to-OpenAI request conversion and OpenAI-to-Claude response conversion
-- Streaming SSE support
-- Schema-less Claude Code tool conversion
-- Image-aware routing to a vision model
-- Bundled MCP support with repo-relative launchers
-- Deterministic prefix-cache discipline for vLLM/SGLang KV reuse on Nebius
-- Anthropic-compatible `/v1/messages/count_tokens` (counts tools too)
-- Pair-aware context auto-truncation (never orphans tool_results)
-- Tool-call JSON repair (trailing commas, unescaped newlines) and duplicate
-  tool-call dedup for open models — always on, no configuration needed
-- Local fast-path responses for Claude Code housekeeping calls: quota probes,
-  command-prefix detection, title generation, suggestion mode, and filepath extraction
+After it finishes:
 
-## Quick Start
+```bash
+claude --proxy        # or just 'claudius' if you added the shell shortcuts
+# OR
+claudius
+# OR
+.venv/bin/python start_proxy.py
+```
 
-### Prerequisites
+Then open http://localhost:8083/dashboard for the observability dashboard.
+
+## Prerequisites
 
 - Python 3.9+
-- Claude Code
-- Nebius API credentials
-- `uv` optional but recommended
+- Nebius API key (from https://nebius.com)
+- Claude Code (optional; install from Anthropic)
 
-### Install
+## Quick Start (manual)
 
-Using `uv`:
-
-```bash
-uv sync
-```
-
-Using `pip`:
+If you prefer not to use the TUI:
 
 ```bash
-python -m pip install -e ".[dev]"
-```
+# 1. Clone and enter directory
+cd claude-code-proxy
 
-### Configure
+# 2. Create venv & install deps
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
-```bash
+# 3. Configure
 cp .env.example .env
-```
+# Edit .env: set OPENAI_API_KEY, BIG_MODEL, etc.
 
-Required values:
+# 4. Run
+.venv/bin/python start_proxy.py
 
-```bash
-OPENAI_API_KEY="your-nebius-api-key"
-OPENAI_BASE_URL="https://api.tokenfactory.nebius.com/v1"
-```
-
-Common model settings:
-
-```bash
-BIG_MODEL="zai-org/GLM-4.7-FP8"
-MIDDLE_MODEL="zai-org/GLM-4.7-FP8"
-SMALL_MODEL="zai-org/GLM-4.7-FP8"
-VISION_MODEL="Qwen/Qwen2.5-VL-72B-Instruct"
-STRIP_IMAGE_CONTEXT="true"
-```
-
-Local request optimizations are enabled by default. They avoid Nebius calls for
-Claude Code housekeeping requests that do not need model reasoning:
-
-```bash
-ENABLE_REQUEST_OPTIMIZATIONS="true"
-FAST_PREFIX_DETECTION="true"
-ENABLE_NETWORK_PROBE_MOCK="true"
-ENABLE_TITLE_GENERATION_SKIP="true"
-ENABLE_SUGGESTION_MODE_SKIP="true"
-ENABLE_FILEPATH_EXTRACTION_MOCK="true"
-```
-
-#### Reasoning models
-
-Several Nebius-hosted models emit *hidden* reasoning tokens before producing
-visible output. These tokens count against `max_tokens`, so very small budgets
-can return empty content. Known reasoning-style models on Nebius:
-
-- `moonshotai/Kimi-K2.5`
-- `deepseek-ai/DeepSeek-V3.2`
-- `zai-org/GLM-5`
-- `Qwen/Qwen3-Next-80B-A3B-Thinking`
-- `Qwen/Qwen3-235B-A22B-Thinking-2507-fast`
-
-Implication: keep `MAX_TOKENS_LIMIT` and per-request `max_tokens` generous
-(>=4096 is recommended; 16k+ is safer for agentic tool-use loops). If a
-reasoning model returns empty text with a non-zero `output_tokens` count, the
-budget was exhausted by reasoning before any visible output was produced —
-raise the limit and retry.
-
-Verify model availability and pick alternatives at:
-
-```bash
-curl -s https://api.tokenfactory.nebius.com/v1/models \
-  -H "Authorization: Bearer $OPENAI_API_KEY" | jq '.data[].id'
-```
-
-### Run
-
-```bash
-python start_proxy.py
-```
-
-Or:
-
-```bash
-uv run claude-code-proxy-nebius
-```
-
-### Use with Claude Code
-
-Claude Code talks to the proxy via `ANTHROPIC_BASE_URL` plus one auth variable.
-Prefer `ANTHROPIC_AUTH_TOKEN`; setting both `ANTHROPIC_AUTH_TOKEN` and
-`ANTHROPIC_API_KEY` makes Claude Code print auth-conflict warnings.
-
-To wire this up permanently, add the following to your shell rc
-(`~/.zshrc`, `~/.bashrc`, or the equivalent PowerShell profile), then open a
-new terminal:
-
-```bash
-export ANTHROPIC_BASE_URL=http://localhost:8083
-export ANTHROPIC_AUTH_TOKEN=claude-local
-```
-
-Or run as a one-off, prefixing the env vars on the command line:
-
-```bash
+# 5. Use
 ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_AUTH_TOKEN=claude-local claude
-```
-
-If `IGNORE_CLIENT_API_KEY=false`, the client token must match `ANTHROPIC_API_KEY`
-in the proxy `.env`.
-
-### Quick Switch: `claude`, `claude --proxy`, and `claudius`
-
-This project includes a shell function that lets you switch between direct (subscription) and proxy (Nebius) connections with a single command.
-
-See [docs/SHELL_FUNCTION.md](./docs/SHELL_FUNCTION.md) for the full function code and usage guide.
-
-The install script (`./install.sh`) can automatically configure this for zsh,
-bash, or PowerShell — just say yes when prompted.
-
-#### Statusline indicator (optional)
-
-Claude Code displays the model *it requested* (e.g. `claude-sonnet-4-5`),
-not the backend model the proxy actually served (e.g. `moonshotai/Kimi-K2.5`),
-so by default there is no in-UI indicator that you're routed through this
-proxy. A custom statusline fixes that. Add to `~/.claude/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "[ -z \"$ANTHROPIC_BASE_URL\" ] && exit 0; base=\"${ANTHROPIC_BASE_URL%/}\"; cfg=$(curl -fsS --max-time 1 \"$base/api/observability/config\" 2>/dev/null || true); model=$(printf '%s' \"$cfg\" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get(\"configured_models\") or {}).get(\"big\") or \"\")' 2>/dev/null || true); ctx=$(curl -fsS --max-time 1 \"$base/api/observability/context-usage\" 2>/dev/null || true); free=$(printf '%s' \"$ctx\" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get(\"remaining_tokens\",1048576) or 1048576; t=d.get(\"context_limit\",1048576) or 1048576; print(f\"{round((r/t)*100)}\")' 2>/dev/null || true); if [ -n \"$model\" ]; then if [ -n \"$free\" ] && [[ \"$free\" =~ ^[0-9]+$ ]]; then if [ \"$free\" -le 20 ]; then c=\"\\033[31m\"; elif [ \"$free\" -le 40 ]; then c=\"\\033[38;5;208m\"; elif [ \"$free\" -le 50 ]; then c=\"\\033[33m\"; else c=\"\\033[32m\"; fi; e=\"\\033[0m\"; echo \"[nebius://$model $c${free}% free$e] $base/dashboard\"; else echo \"[nebius://$model] $base/dashboard\"; fi; else echo \"[proxy://$base]\"; fi"
-  }
-}
-```
-
-**How it works:** When using `claude --proxy`, each session runs through a
-unique local forwarder port. The statusline queries `context-usage` on that
-port, so each session sees its own percentage — no cross-contamination.
-
-**Behavior:**
-
-- Bare `claude` (no proxy) → statusline is blank, no clutter.
-- Proxy-routed + data available → e.g. `[nebius://MiniMax-M2.5 96% free] http://localhost:50001/dashboard`.
-- Proxy-routed + no data yet → e.g. `[nebius://MiniMax-M2.5] http://localhost:50001/dashboard`.
-- If the proxy is unreachable → falls back to `[proxy://<base>]`.
-
-The command is read at session start, so re-open Claude Code after editing
-`settings.json`.
-
-## MCP Support
-
-Bundled MCP servers live under `MCP/`.
-
-Current MCPs:
-
-- `MCP/macoscontrol-mcp`: local macOS screen-control MCP
-
-The project-level `.mcp.json` is checked in with repo-relative paths so the bundled MCP can be launched from a fresh clone without machine-specific absolute paths.
-
-## Testing
-
-Run the full suite:
-
-```bash
-pytest -q
-```
-
-Useful targeted runs:
-
-```bash
-pytest -q tests/test_request_converter.py tests/test_response_converter.py
-pytest -q tests/test_image_routing.py
-RUN_PROXY_INTEGRATION_TESTS=1 pytest -q tests/test_main.py
 ```
 
 ## Observability
 
-The proxy serves a local dashboard at:
-
-```bash
-http://localhost:8083/dashboard
-```
-
-It tracks configured provider/model routing, token usage, estimated cost from
-`MODEL_PRICES_JSON`, latency, failures, and tool calls. Docker Compose persists
-the dashboard database under `./data/observability.sqlite3`.
-
-## Development
-
-Common commands:
-
-```bash
-uv run black src tests
-uv run isort src tests
-uv run mypy src
-```
+Open http://localhost:8083/dashboard for usage, latency, cost, and model routing info.
 
 ## Documentation
 
-Tracked project documentation lives in `docs/`:
+For full configuration options, model details, architecture, MCP setup, troubleshooting, and the complete feature list, see **[docs/README.md](docs/README.md)**.
 
-- [docs/README.md](./docs/README.md)
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-- [docs/TOOL_CALL_FORMAT.md](./docs/TOOL_CALL_FORMAT.md)
-- [docs/MCP_SERVER_GUIDE.md](./docs/MCP_SERVER_GUIDE.md)
-- [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md)
-- [docs/GLM_QUIRKS.md](./docs/GLM_QUIRKS.md)
-- [docs/BUGS_FIXED.md](./docs/BUGS_FIXED.md)
-- [docs/BINARY_PACKAGING.md](./docs/BINARY_PACKAGING.md)
+| Doc | What's inside |
+|-----|-------------|
+| [docs/README.md](docs/README.md) | Full reference index — everything |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, key files, design |
+| [docs/TOOL_CALL_FORMAT.md](docs/TOOL_CALL_FORMAT.md) | Claude SSE tool-call streaming |
+| [docs/MCP_SERVER_GUIDE.md](docs/MCP_SERVER_GUIDE.md) | MCP server compatibility |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Dashboard configuration |
+| [docs/SHELL_FUNCTION.md](docs/SHELL_FUNCTION.md) | Shell shortcut reference |
+| [docs/BINARY_PACKAGING.md](docs/BINARY_PACKAGING.md) | Standalone binary notes |
+
+## Features (high-level)
+
+- Claude `/v1/messages` proxying to Nebius OpenAI-compatible endpoints
+- Streaming SSE
+- Automatic model routing (big / middle / small / vision)
+- Built-in request optimizations for Claude Code housekeeping
+- Tool-call JSON repair and deduplication
+- Context auto-truncation (never orphans tool results)
+- Observability dashboard with cost tracking
+- Bundled MCP servers
 
 ## Scope
 
-This project is designed and tested specifically for Nebius token factory infrastructure. The current proxy behavior, defaults, and troubleshooting guidance are Nebius-centric rather than provider-agnostic.
+Designed for Nebius token factory infrastructure. Defaults and troubleshooting guidance are Nebius-centric rather than provider-agnostic.
 
 ## License
 
