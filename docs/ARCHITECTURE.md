@@ -4,14 +4,12 @@
 
 This project exposes a Claude-compatible API surface for Claude Code and forwards requests to Nebius-hosted OpenAI-compatible models.
 
-It also bundles MCP servers under `MCP/` so Claude Code can use local tools alongside the proxy.
 
 ## High-Level Flow
 
 ```text
 Claude Code
   ├─ Claude API request -> Proxy (`POST /v1/messages`)
-  └─ MCP stdio -> Bundled MCP servers in `MCP/`
 
 Proxy
   ├─ request conversion: Claude -> OpenAI-compatible payload
@@ -33,7 +31,6 @@ Nebius
 | `src/conversion/request_converter.py` | Claude request -> OpenAI request |
 | `src/conversion/response_converter.py` | OpenAI response -> Claude SSE |
 | `src/conversion/computer_use.py` | schema-less tool conversion |
-| `MCP/macoscontrol-mcp/server.py` | bundled macOS control MCP |
 | `start_proxy.py` | local convenience launcher |
 
 ## Model Configuration
