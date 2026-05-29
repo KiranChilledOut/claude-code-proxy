@@ -86,6 +86,8 @@ class Forwarder(http.server.BaseHTTPRequestHandler):
             try:
                 self.send_error(502, "Proxy forwarder upstream connection failed")
             except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+                # Silently drop: client already disconnected or
+                # send_error() raised ValueError because headers were already sent.
                 pass
         finally:
             conn.close()
