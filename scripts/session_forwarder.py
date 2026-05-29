@@ -75,6 +75,18 @@ class Forwarder(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+        except (
+            BrokenPipeError,
+            ConnectionResetError,
+            TimeoutError,
+            http.client.RemoteDisconnected,
+            OSError,
+        ) as exc:
+            print(f"[forwarder] request forwarding failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            try:
+                self.send_error(502, "Proxy forwarder upstream connection failed")
+            except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+                pass
         finally:
             conn.close()
 

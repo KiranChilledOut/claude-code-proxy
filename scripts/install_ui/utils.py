@@ -353,7 +353,8 @@ claude() {{
         session_name="${{session_name:-$default_name}}"
         local local_port
         local_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-        python3 "$repo_root/scripts/session_forwarder.py" "$local_port" "localhost:{port}" "$session_name" &
+        mkdir -p "$repo_root/logs"
+        python3 "$repo_root/scripts/session_forwarder.py" "$local_port" "localhost:{port}" "$session_name" >> "$repo_root/logs/session-forwarder.log" 2>&1 &
         local forwarder_pid=$!
         sleep 0.5
         local forwarder_url="http://localhost:$local_port"
