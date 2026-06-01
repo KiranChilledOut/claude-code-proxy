@@ -1,7 +1,11 @@
+import json
 import sys
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from src.api.endpoints import router as api_router
 from src.core.config import config
@@ -12,6 +16,28 @@ app = FastAPI(title="Claude-to-OpenAI API Proxy", version="1.0.0")
 
 app.include_router(api_router)
 app.include_router(observability_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def log_validation_error(request: Request, exc: RequestValidationError):
+    """Log 422 validation errors with the offending request body for debugging."""
+    body = await request.body()
+    print("=== 422 validation error ===", flush=True)
+    print("path:", request.url.path, flush=True)
+    try:
+        print("errors:", json.dumps(exc.errors(), default=str, indent=2)[:4000], flush=True)
+    except Exception as e:
+        print("errors (repr):", repr(exc.errors())[:4000], flush=True)
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict) and "messages" in parsed and isinstance(parsed["messages"], list):
+            parsed["_messages_total"] = len(parsed["messages"])
+            parsed["messages"] = parsed["messages"][-3:]
+        print("body (tail):", json.dumps(parsed, default=str, indent=2)[:6000], flush=True)
+    except Exception:
+        print("body (raw):", body[:4000], flush=True)
+    print("=== end 422 ===", flush=True)
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 @app.on_event("startup")
