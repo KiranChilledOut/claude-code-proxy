@@ -32,7 +32,7 @@ class ClaudeSystemContent(BaseModel):
 
 
 class ClaudeMessage(BaseModel):
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content: Union[
         str,
         List[
@@ -44,6 +44,9 @@ class ClaudeMessage(BaseModel):
             ]
         ],
     ]
+
+    class Config:
+        extra = "allow"  # Forward compat: ignore unknown fields (e.g. cache_control on the message)
 
 
 class ClaudeTool(BaseModel):

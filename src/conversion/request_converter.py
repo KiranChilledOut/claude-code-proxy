@@ -484,7 +484,25 @@ def convert_claude_to_openai(
         while i < len(claude_request.messages):
             msg = claude_request.messages[i]
 
-            if msg.role == Constants.ROLE_USER:
+            if msg.role == Constants.ROLE_SYSTEM:
+                # Inline system message (e.g. from SessionStart hooks). Flatten
+                # to text and append as an OpenAI system turn.
+                sys_text = ""
+                if isinstance(msg.content, str):
+                    sys_text = msg.content
+                elif isinstance(msg.content, list):
+                    parts = []
+                    for block in msg.content:
+                        if hasattr(block, "type") and block.type == Constants.CONTENT_TEXT:
+                            parts.append(block.text)
+                        elif isinstance(block, dict) and block.get("type") == Constants.CONTENT_TEXT:
+                            parts.append(block.get("text", ""))
+                    sys_text = "\n\n".join(parts)
+                if sys_text.strip():
+                    openai_messages.append(
+                        {"role": Constants.ROLE_SYSTEM, "content": sys_text.strip()}
+                    )
+            elif msg.role == Constants.ROLE_USER:
                 openai_message = convert_claude_user_message(msg, allow_images=has_image)
                 openai_messages.append(openai_message)
             elif msg.role == Constants.ROLE_ASSISTANT:
