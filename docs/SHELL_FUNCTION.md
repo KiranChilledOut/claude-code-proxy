@@ -22,6 +22,8 @@ The installed bash/zsh function uses `scripts/session_forwarder.py` to spin up a
 
 The PowerShell function uses `Start-Job` for equivalent behaviour.
 
+Forwarder output (including network errors) is written to `logs/session-forwarder.log` so it does not appear in the Claude Code TUI.
+
 ## Visual Feedback
 
 - **Green** (`▐▛▜▌ Claude Direct`) = Subscription login mode
@@ -35,6 +37,10 @@ The PowerShell function uses `Start-Job` for equivalent behaviour.
 cd /path/to/claude-code-proxy
 .venv/bin/python start_proxy.py
 ```
+
+### Session-forwarder errors in the TUI?
+
+If you see errors like `[forwarder] request forwarding failed` inside Claude Code, they are expected during normal operation (brief upstream disconnects). They are redirected to `logs/session-forwarder.log` by the installed shell function. If they appear in the TUI, re-run `./install.sh` to get the latest shell function.
 
 ### Port different from 8083?
 

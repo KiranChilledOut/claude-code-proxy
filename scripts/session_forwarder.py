@@ -48,7 +48,15 @@ class Forwarder(http.server.BaseHTTPRequestHandler):
         headers["Host"] = f"{host}:{port}"
 
         # Remove hop-by-hop headers
-        for h in ("Connection", "Keep-Alive", "Proxy-Authorization", "Proxy-Authenticate", "TE", "Transfer-Encoding", "Upgrade"):
+        for h in (
+            "Connection",
+            "Keep-Alive",
+            "Proxy-Authorization",
+            "Proxy-Authenticate",
+            "TE",
+            "Transfer-Encoding",
+            "Upgrade",
+        ):
             headers.pop(h, None)
             headers.pop(h.lower(), None)
 
@@ -75,6 +83,31 @@ class Forwarder(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+        except (
+            BrokenPipeError,
+            ConnectionResetError,
+            TimeoutError,
+            http.client.RemoteDisconnected,
+            http.client.HTTPException,
+            OSError,
+        ) as exc:
+            print(
+                f"[forwarder] request forwarding failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            try:
+                self.send_error(502, "Proxy forwarder upstream connection failed")
+            except (
+                BrokenPipeError,
+                ConnectionResetError,
+                TimeoutError,
+                http.client.RemoteDisconnected,
+                OSError,
+            ):
+                print(
+                    f"[forwarder] send_error also failed: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
         finally:
             conn.close()
 
@@ -107,7 +140,9 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     if len(sys.argv) != 4:
-        print("Usage: session_forwarder.py <port> <target_host:port> <session_name>", file=sys.stderr)
+        print(
+            "Usage: session_forwarder.py <port> <target_host:port> <session_name>", file=sys.stderr
+        )
         sys.exit(1)
 
     port = int(sys.argv[1])
