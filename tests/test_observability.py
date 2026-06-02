@@ -110,8 +110,6 @@ def test_connect_closes_connection_even_on_exception(mocker):
         pricing_catalog=PricingCatalog("{}"),
     )
     mock_conn = mocker.MagicMock()
-    mock_conn.__enter__ = mocker.Mock(return_value=mock_conn)
-    mock_conn.__exit__ = mocker.Mock(return_value=False)
     mocker.patch("sqlite3.connect", return_value=mock_conn)
 
     with pytest.raises(RuntimeError):

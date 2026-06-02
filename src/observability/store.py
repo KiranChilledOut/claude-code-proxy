@@ -247,79 +247,47 @@ class ObservabilityRecorder:
     def fetch_context_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
         if not self.enabled or not Path(self.db_path).exists():
             return None
-
         with self._connect() as conn:
-            # Latest non-zero request: use the most recent request with actual
-            # token usage so that context reflects the *current* state after
-            # Claude Code autocompacts, rather than the all-time peak (MAX).
-            # Local-optimisation (0-token) requests are excluded.
-            latest = conn.execute(
-                """
-                SELECT claude_model, backend_model, completed_at,
-                       total_tokens, input_tokens, output_tokens
-                FROM requests
-                WHERE session_id = ? AND status = 'success' AND total_tokens > 0
-                ORDER BY started_at_unix DESC
-                LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-            if latest is None:
-                return None
-
-            totals = conn.execute(
-                """
-                SELECT
-                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
-                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
-                    COUNT(*) AS request_count
-                FROM requests
-                WHERE session_id = ? AND status = 'success'
-                """,
-                (session_id,),
-            ).fetchone()
-
-        return {
-            "claude_model": latest["claude_model"],
-            "backend_model": latest["backend_model"],
-            "total_tokens": latest["total_tokens"] or 0,
-            "input_tokens": latest["input_tokens"] or 0,
-            "output_tokens": latest["output_tokens"] or 0,
-            "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
-            "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
-            "request_count": totals["request_count"],
-        }
+            return self._context_usage_for(conn, "session_id", session_id)
 
     def fetch_context_usage_by_name(self, session_name: str) -> Optional[Dict[str, Any]]:
         if not self.enabled or not Path(self.db_path).exists():
             return None
-
         with self._connect() as conn:
-            latest = conn.execute(
-                """
-                SELECT claude_model, backend_model, completed_at,
-                       total_tokens, input_tokens, output_tokens
-                FROM requests
-                WHERE session_name = ? AND status = 'success' AND total_tokens > 0
-                ORDER BY started_at_unix DESC
-                LIMIT 1
-                """,
-                (session_name,),
-            ).fetchone()
-            if latest is None:
-                return None
+            return self._context_usage_for(conn, "session_name", session_name)
 
-            totals = conn.execute(
-                """
-                SELECT
-                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
-                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
-                    COUNT(*) AS request_count
-                FROM requests
-                WHERE session_name = ? AND status = 'success'
-                """,
-                (session_name,),
-            ).fetchone()
+    def _context_usage_for(
+        self, conn: sqlite3.Connection, column: str, value: str
+    ) -> Optional[Dict[str, Any]]:
+        # Latest non-zero request: use the most recent request with actual
+        # token usage so that context reflects the *current* state after
+        # Claude Code autocompacts, rather than the all-time peak (MAX).
+        # Local-optimisation (0-token) requests are excluded.
+        latest = conn.execute(
+            f"""
+            SELECT claude_model, backend_model, completed_at,
+                   total_tokens, input_tokens, output_tokens
+            FROM requests
+            WHERE {column} = ? AND status = 'success' AND total_tokens > 0
+            ORDER BY started_at_unix DESC
+            LIMIT 1
+            """,
+            (value,),
+        ).fetchone()
+        if latest is None:
+            return None
+
+        totals = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+                COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+                COUNT(*) AS request_count
+            FROM requests
+            WHERE {column} = ? AND status = 'success'
+            """,
+            (value,),
+        ).fetchone()
 
         return {
             "claude_model": latest["claude_model"],
