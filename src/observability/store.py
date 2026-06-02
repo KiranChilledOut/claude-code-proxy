@@ -175,16 +175,14 @@ class ObservabilityRecorder:
                 """,
                 (cutoff,),
             ).fetchone()
-            all_time = conn.execute(
-                """
+            all_time = conn.execute("""
                 SELECT
                     COUNT(*) AS request_count,
                     COALESCE(SUM(input_tokens), 0) AS input_tokens,
                     COALESCE(SUM(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(estimated_cost), 0) AS estimated_cost
                 FROM requests
-                """
-            ).fetchone()
+                """).fetchone()
             series = self._fetch_series(conn, cutoff, hours)
             model_stats = self._fetch_model_stats(conn, cutoff)
 
@@ -237,15 +235,13 @@ class ObservabilityRecorder:
         if not self.enabled or not Path(self.db_path).exists():
             return None
         with self._connect() as conn:
-            row = conn.execute(
-                """
+            row = conn.execute("""
                 SELECT session_id
                 FROM requests
                 WHERE session_id IS NOT NULL
                 ORDER BY started_at_unix DESC
                 LIMIT 1
-                """
-            ).fetchone()
+                """).fetchone()
         return row["session_id"] if row else None
 
     def fetch_context_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -341,8 +337,7 @@ class ObservabilityRecorder:
         if not self.enabled or not Path(self.db_path).exists():
             return []
         with self._connect() as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT
                     session_name,
                     session_id,
@@ -357,11 +352,12 @@ class ObservabilityRecorder:
                 WHERE session_name IS NOT NULL
                 GROUP BY session_name
                 ORDER BY MAX(started_at_unix) DESC
-                """
-            ).fetchall()
+                """).fetchall()
         return [dict(row) for row in rows]
 
-    def fetch_session_series(self, session_name: str, bucket_seconds: int = 300) -> List[Dict[str, Any]]:
+    def fetch_session_series(
+        self, session_name: str, bucket_seconds: int = 300
+    ) -> List[Dict[str, Any]]:
         """Return bucketed time-series data for a single session."""
         if not self.enabled or not Path(self.db_path).exists():
             return []
@@ -448,7 +444,9 @@ class ObservabilityRecorder:
             "model_stats": model_stats,
         }
 
-    def fetch_requests_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_requests_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT *
@@ -460,7 +458,9 @@ class ObservabilityRecorder:
             (session_name, max(1, min(limit, 500))),
         )
 
-    def fetch_failures_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_failures_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT *
@@ -472,7 +472,9 @@ class ObservabilityRecorder:
             (session_name, max(1, min(limit, 500))),
         )
 
-    def fetch_tool_calls_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_tool_calls_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT tool_calls.*, requests.backend_model, requests.status AS request_status
@@ -548,8 +550,7 @@ class ObservabilityRecorder:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS requests (
                     request_id TEXT PRIMARY KEY,
                     started_at TEXT NOT NULL,
@@ -581,8 +582,7 @@ class ObservabilityRecorder:
                     session_id TEXT,
                     session_name TEXT
                 )
-                """
-            )
+                """)
             self._ensure_column(
                 conn,
                 "requests",
@@ -601,14 +601,11 @@ class ObservabilityRecorder:
                 "session_name",
                 "TEXT",
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_requests_session_name ON requests(session_name)"
             )
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS tool_calls (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     request_id TEXT NOT NULL,
@@ -619,8 +616,7 @@ class ObservabilityRecorder:
                     status TEXT,
                     sanitized INTEGER NOT NULL DEFAULT 0
                 )
-                """
-            )
+                """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_requests_started ON requests(started_at_unix)"
             )
@@ -668,6 +664,7 @@ class ObservabilityRecorder:
                         """,
                         tool_call,
                     )
+            conn.commit()
 
     def _ensure_column(
         self, conn: sqlite3.Connection, table: str, column: str, definition: str
@@ -740,13 +737,14 @@ class ObservabilityRecorder:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn: Optional[sqlite3.Connection] = None
         try:
-            with conn:
-                yield conn
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            yield conn
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def _arguments_preview(self, arguments: Any) -> str:
         if not self.store_tool_args:

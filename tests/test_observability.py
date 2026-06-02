@@ -99,3 +99,23 @@ async def test_observability_recorder_persists_request_and_tool_call(tmp_path):
     assert "echo ok" in tool_calls[0]["arguments_preview"]
     assert "secret" not in tool_calls[0]["arguments_preview"]
     assert "[redacted]" in tool_calls[0]["arguments_preview"]
+
+
+def test_connect_closes_connection_even_on_exception(mocker):
+    """_connect context manager calls conn.close() in finally."""
+    recorder = ObservabilityRecorder(
+        enabled=True,
+        db_path=":memory:",
+        queue_size=10,
+        pricing_catalog=PricingCatalog("{}"),
+    )
+    mock_conn = mocker.MagicMock()
+    mock_conn.__enter__ = mocker.Mock(return_value=mock_conn)
+    mock_conn.__exit__ = mocker.Mock(return_value=False)
+    mocker.patch("sqlite3.connect", return_value=mock_conn)
+
+    with pytest.raises(RuntimeError):
+        with recorder._connect() as _conn:
+            raise RuntimeError("boom")
+
+    mock_conn.close.assert_called_once()
