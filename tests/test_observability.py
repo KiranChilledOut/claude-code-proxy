@@ -1,4 +1,6 @@
+import sqlite3
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -99,3 +101,122 @@ async def test_observability_recorder_persists_request_and_tool_call(tmp_path):
     assert "echo ok" in tool_calls[0]["arguments_preview"]
     assert "secret" not in tool_calls[0]["arguments_preview"]
     assert "[redacted]" in tool_calls[0]["arguments_preview"]
+
+
+def test_connect_closes_connection_even_on_exception(monkeypatch):
+    """_connect context manager calls conn.close() in finally when an exception is raised."""
+    recorder = ObservabilityRecorder(
+        enabled=True,
+        db_path=":memory:",
+        queue_size=10,
+        pricing_catalog=PricingCatalog("{}"),
+    )
+    mock_conn = MagicMock()
+    monkeypatch.setattr(sqlite3, "connect", lambda _path: mock_conn)
+
+    with pytest.raises(RuntimeError):
+        with recorder._connect() as _conn:
+            raise RuntimeError("boom")
+
+    mock_conn.close.assert_called_once()
+
+
+def test_connect_closes_after_successful_yield(monkeypatch):
+    """_connect context manager calls conn.close() after normal completion."""
+    recorder = ObservabilityRecorder(
+        enabled=True,
+        db_path=":memory:",
+        queue_size=10,
+        pricing_catalog=PricingCatalog("{}"),
+    )
+    mock_conn = MagicMock()
+    monkeypatch.setattr(sqlite3, "connect", lambda _path: mock_conn)
+
+    with recorder._connect() as _conn:
+        pass
+
+    mock_conn.close.assert_called_once()
+
+
+def test_context_usage_for_returns_latest_nonzero_tokens(tmp_path):
+    """_context_usage_for returns latest request with tokens > 0."""
+    db_path = tmp_path / "observability.sqlite3"
+    recorder = ObservabilityRecorder(
+        enabled=True,
+        db_path=str(db_path),
+        queue_size=10,
+        pricing_catalog=PricingCatalog("{}"),
+    )
+    recorder._init_db()
+    with recorder._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO requests (
+                request_id, started_at, started_at_unix, status,
+                total_tokens, input_tokens, output_tokens,
+                session_id, claude_model, backend_model,
+                cache_read_input_tokens, cache_creation_input_tokens,
+                stream, latency_ms, usage_source
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'provider')
+            """,
+            (
+                "r1", "2024-01-01T00:00:00", 1, "success",
+                0, 0, 0, "s1", "", "",
+                0, 0, 0, 0,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO requests (
+                request_id, started_at, started_at_unix, status,
+                total_tokens, input_tokens, output_tokens,
+                session_id, claude_model, backend_model,
+                cache_read_input_tokens, cache_creation_input_tokens,
+                stream, latency_ms, usage_source
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'provider')
+            """,
+            (
+                "r2", "2024-01-01T00:00:01", 2, "success",
+                100, 50, 50, "s1", "claude-sonnet", "model-a",
+                5, 0, 0, 1000,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO requests (
+                request_id, started_at, started_at_unix, status,
+                total_tokens, input_tokens, output_tokens,
+                session_id, claude_model, backend_model,
+                cache_read_input_tokens, cache_creation_input_tokens,
+                stream, latency_ms, usage_source
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'provider')
+            """,
+            (
+                "r3", "2024-01-01T00:00:02", 3, "success",
+                200, 80, 120, "s1", "claude-sonnet", "model-b",
+                10, 0, 0, 1000,
+            ),
+        )
+        result = recorder._context_usage_for(conn, "session_id", "s1")
+
+    assert result is not None
+    assert result["total_tokens"] == 200
+    assert result["input_tokens"] == 80
+    assert result["output_tokens"] == 120
+    assert result["cache_read_input_tokens"] == 15
+    assert result["request_count"] == 3
+
+
+def test_context_usage_for_returns_none_when_no_rows(tmp_path):
+    """_context_usage_for returns None when no matching session."""
+    db_path = tmp_path / "observability.sqlite3"
+    recorder = ObservabilityRecorder(
+        enabled=True,
+        db_path=str(db_path),
+        queue_size=10,
+        pricing_catalog=PricingCatalog("{}"),
+    )
+    recorder._init_db()
+    with recorder._connect() as conn:
+        result = recorder._context_usage_for(conn, "session_id", "nonexistent")
+    assert result is None

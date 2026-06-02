@@ -3,9 +3,10 @@ import json
 import logging
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from src.core.config import config
 from src.observability.pricing import PricingCatalog
@@ -174,16 +175,14 @@ class ObservabilityRecorder:
                 """,
                 (cutoff,),
             ).fetchone()
-            all_time = conn.execute(
-                """
+            all_time = conn.execute("""
                 SELECT
                     COUNT(*) AS request_count,
                     COALESCE(SUM(input_tokens), 0) AS input_tokens,
                     COALESCE(SUM(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(estimated_cost), 0) AS estimated_cost
                 FROM requests
-                """
-            ).fetchone()
+                """).fetchone()
             series = self._fetch_series(conn, cutoff, hours)
             model_stats = self._fetch_model_stats(conn, cutoff)
 
@@ -236,93 +235,59 @@ class ObservabilityRecorder:
         if not self.enabled or not Path(self.db_path).exists():
             return None
         with self._connect() as conn:
-            row = conn.execute(
-                """
+            row = conn.execute("""
                 SELECT session_id
                 FROM requests
                 WHERE session_id IS NOT NULL
                 ORDER BY started_at_unix DESC
                 LIMIT 1
-                """
-            ).fetchone()
+                """).fetchone()
         return row["session_id"] if row else None
 
     def fetch_context_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
         if not self.enabled or not Path(self.db_path).exists():
             return None
-
         with self._connect() as conn:
-            # Latest non-zero request: use the most recent request with actual
-            # token usage so that context reflects the *current* state after
-            # Claude Code autocompacts, rather than the all-time peak (MAX).
-            # Local-optimisation (0-token) requests are excluded.
-            latest = conn.execute(
-                """
-                SELECT claude_model, backend_model, completed_at,
-                       total_tokens, input_tokens, output_tokens
-                FROM requests
-                WHERE session_id = ? AND status = 'success' AND total_tokens > 0
-                ORDER BY started_at_unix DESC
-                LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-            if latest is None:
-                return None
-
-            totals = conn.execute(
-                """
-                SELECT
-                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
-                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
-                    COUNT(*) AS request_count
-                FROM requests
-                WHERE session_id = ? AND status = 'success'
-                """,
-                (session_id,),
-            ).fetchone()
-
-        return {
-            "claude_model": latest["claude_model"],
-            "backend_model": latest["backend_model"],
-            "total_tokens": latest["total_tokens"] or 0,
-            "input_tokens": latest["input_tokens"] or 0,
-            "output_tokens": latest["output_tokens"] or 0,
-            "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
-            "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
-            "request_count": totals["request_count"],
-        }
+            return self._context_usage_for(conn, "session_id", session_id)
 
     def fetch_context_usage_by_name(self, session_name: str) -> Optional[Dict[str, Any]]:
         if not self.enabled or not Path(self.db_path).exists():
             return None
-
         with self._connect() as conn:
-            latest = conn.execute(
-                """
-                SELECT claude_model, backend_model, completed_at,
-                       total_tokens, input_tokens, output_tokens
-                FROM requests
-                WHERE session_name = ? AND status = 'success' AND total_tokens > 0
-                ORDER BY started_at_unix DESC
-                LIMIT 1
-                """,
-                (session_name,),
-            ).fetchone()
-            if latest is None:
-                return None
+            return self._context_usage_for(conn, "session_name", session_name)
 
-            totals = conn.execute(
-                """
-                SELECT
-                    COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
-                    COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
-                    COUNT(*) AS request_count
-                FROM requests
-                WHERE session_name = ? AND status = 'success'
-                """,
-                (session_name,),
-            ).fetchone()
+    def _context_usage_for(
+        self, conn: sqlite3.Connection, column: str, value: str
+    ) -> Optional[Dict[str, Any]]:
+        # Latest non-zero request: use the most recent request with actual
+        # token usage so that context reflects the *current* state after
+        # Claude Code autocompacts, rather than the all-time peak (MAX).
+        # Local-optimisation (0-token) requests are excluded.
+        latest = conn.execute(
+            f"""
+            SELECT claude_model, backend_model, completed_at,
+                   total_tokens, input_tokens, output_tokens
+            FROM requests
+            WHERE {column} = ? AND status = 'success' AND total_tokens > 0
+            ORDER BY started_at_unix DESC
+            LIMIT 1
+            """,
+            (value,),
+        ).fetchone()
+        if latest is None:
+            return None
+
+        totals = conn.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+                COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+                COUNT(*) AS request_count
+            FROM requests
+            WHERE {column} = ? AND status = 'success'
+            """,
+            (value,),
+        ).fetchone()
 
         return {
             "claude_model": latest["claude_model"],
@@ -340,8 +305,7 @@ class ObservabilityRecorder:
         if not self.enabled or not Path(self.db_path).exists():
             return []
         with self._connect() as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT
                     session_name,
                     session_id,
@@ -356,11 +320,12 @@ class ObservabilityRecorder:
                 WHERE session_name IS NOT NULL
                 GROUP BY session_name
                 ORDER BY MAX(started_at_unix) DESC
-                """
-            ).fetchall()
+                """).fetchall()
         return [dict(row) for row in rows]
 
-    def fetch_session_series(self, session_name: str, bucket_seconds: int = 300) -> List[Dict[str, Any]]:
+    def fetch_session_series(
+        self, session_name: str, bucket_seconds: int = 300
+    ) -> List[Dict[str, Any]]:
         """Return bucketed time-series data for a single session."""
         if not self.enabled or not Path(self.db_path).exists():
             return []
@@ -447,7 +412,9 @@ class ObservabilityRecorder:
             "model_stats": model_stats,
         }
 
-    def fetch_requests_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_requests_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT *
@@ -459,7 +426,9 @@ class ObservabilityRecorder:
             (session_name, max(1, min(limit, 500))),
         )
 
-    def fetch_failures_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_failures_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT *
@@ -471,7 +440,9 @@ class ObservabilityRecorder:
             (session_name, max(1, min(limit, 500))),
         )
 
-    def fetch_tool_calls_by_session(self, session_name: str, limit: int = 500) -> List[Dict[str, Any]]:
+    def fetch_tool_calls_by_session(
+        self, session_name: str, limit: int = 500
+    ) -> List[Dict[str, Any]]:
         return self._fetch_rows(
             """
             SELECT tool_calls.*, requests.backend_model, requests.status AS request_status
@@ -547,8 +518,7 @@ class ObservabilityRecorder:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS requests (
                     request_id TEXT PRIMARY KEY,
                     started_at TEXT NOT NULL,
@@ -580,8 +550,7 @@ class ObservabilityRecorder:
                     session_id TEXT,
                     session_name TEXT
                 )
-                """
-            )
+                """)
             self._ensure_column(
                 conn,
                 "requests",
@@ -600,14 +569,11 @@ class ObservabilityRecorder:
                 "session_name",
                 "TEXT",
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_requests_session_name ON requests(session_name)"
             )
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS tool_calls (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     request_id TEXT NOT NULL,
@@ -618,8 +584,7 @@ class ObservabilityRecorder:
                     status TEXT,
                     sanitized INTEGER NOT NULL DEFAULT 0
                 )
-                """
-            )
+                """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_requests_started ON requests(started_at_unix)"
             )
@@ -667,6 +632,7 @@ class ObservabilityRecorder:
                         """,
                         tool_call,
                     )
+            conn.commit()
 
     def _ensure_column(
         self, conn: sqlite3.Connection, table: str, column: str, definition: str
@@ -737,10 +703,16 @@ class ObservabilityRecorder:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn: Optional[sqlite3.Connection] = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            yield conn
+        finally:
+            if conn is not None:
+                conn.close()
 
     def _arguments_preview(self, arguments: Any) -> str:
         if not self.store_tool_args:
