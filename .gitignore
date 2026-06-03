@@ -180,9 +180,6 @@ pyrightconfig.json
 .claude.json
 .claude.local/
 
-# Local MCP overrides
-.mcp.local.json
-
 # Local observability data
 data/
 observability.sqlite3*

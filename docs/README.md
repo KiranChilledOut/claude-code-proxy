@@ -13,7 +13,6 @@ Full reference for `claude-code-proxy`. For the quick-start guide, see the root 
   - [Reasoning models](#reasoning-models)
 - [Shell integration](#shell-integration)
 - [Statusline](#statusline)
-- [MCP Support](#mcp-support)
 - [Testing](#testing)
 - [Observability](#observability)
 - [Development](#development)
@@ -152,16 +151,6 @@ Add to `~/.claude/settings.json`:
 
 The TUI installer can add this automatically and safely merges into existing `settings.json` files.
 
-## MCP Support
-
-Bundled MCP servers live under `MCP/`:
-
-- `MCP/macoscontrol-mcp` — local macOS screen control
-
-The project-level `.mcp.json` uses repo-relative paths so it works from a fresh clone.
-
-Full guide: [MCP_SERVER_GUIDE.md](MCP_SERVER_GUIDE.md)
-
 ## Testing
 
 ```bash
@@ -195,7 +184,6 @@ uv run mypy src
 |-----|-------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System flow, request conversion, file map |
 | [TOOL_CALL_FORMAT.md](TOOL_CALL_FORMAT.md) | Claude SSE tool-call streaming |
-| [MCP_SERVER_GUIDE.md](MCP_SERVER_GUIDE.md) | MCP compatibility and usage |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | Dashboard config, persistence |
 | [SHELL_FUNCTION.md](SHELL_FUNCTION.md) | Shell shortcut reference |
 | [BINARY_PACKAGING.md](BINARY_PACKAGING.md) | Standalone binary notes |

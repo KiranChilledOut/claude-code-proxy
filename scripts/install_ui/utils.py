@@ -224,23 +224,51 @@ def sync_venv_create() -> tuple[bool, str]:
 def sync_pip_install() -> tuple[bool, str]:
     """Install requirements into venv. Returns (success, message)."""
     repo = get_repo_root()
-    pip = repo / ".venv" / "bin" / "pip"
-    if platform.system() == "Windows":
-        pip = repo / ".venv" / "Scripts" / "pip.exe"
-
-    if not pip.exists():
-        return False, f"pip not found at {pip}"
-
-    # Upgrade pip first
-    subprocess.run(
-        [str(pip), "install", "--quiet", "--upgrade", "pip"],
-        capture_output=True,
-        check=False,
-    )
-
     req = repo / "requirements.txt"
+    venv = repo / ".venv"
+    python = venv / "bin" / "python"
+    if platform.system() == "Windows":
+        python = venv / "Scripts" / "python.exe"
+
+    # ─── uv-managed venvs have no pip binary — use uv directly ───────
+    uv_path = shutil.which("uv")
+    pip3 = venv / "bin" / "pip3"
+    pip_bin = venv / "bin" / "pip"
+    if platform.system() == "Windows":
+        pip3 = venv / "Scripts" / "pip3.exe"
+        pip_bin = venv / "Scripts" / "pip.exe"
+
+    has_pip = pip_bin.exists() or pip3.exists()
+    if uv_path and not has_pip:
+        # Try uv pip install --python .venv/bin/python
+        result = subprocess.run(
+            [uv_path, "pip", "install", "--python", str(python), "-r", str(req)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, "Dependencies installed (via uv)"
+        return False, result.stderr.strip() or "uv pip install failed"
+
+    if not has_pip:
+        # Bootstrap pip into the venv
+        bootstrap = subprocess.run(
+            [str(python), "-m", "ensurepip", "--upgrade"],
+            capture_output=True,
+            text=True,
+        )
+        if bootstrap.returncode != 0:
+            return False, f"pip not found and bootstrap failed: {bootstrap.stderr.strip() or 'no stderr'}"
+        # Re-check after bootstrap
+        pip3 = venv / "bin" / "pip3"
+        pip_bin = venv / "bin" / "pip"
+        has_pip = pip_bin.exists() or pip3.exists()
+        if not has_pip:
+            return False, "pip still missing after ensurepip"
+
+    # Use python -m pip (works regardless of whether it's pip or pip3)
     result = subprocess.run(
-        [str(pip), "install", "-q", "-r", str(req)],
+        [str(python), "-m", "pip", "install", "--quiet", "-r", str(req)],
         capture_output=True,
         text=True,
     )

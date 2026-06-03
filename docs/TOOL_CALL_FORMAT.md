@@ -33,11 +33,11 @@ Claude Code concatenates every `partial_json` fragment. If the stream starts wit
 - arguments embedded in the function name
 - empty arguments on the first streamed tool delta
 - duplicated buffering before and after block start
-- required MCP parameters missing from malformed model output
+- required tool parameters missing from malformed model output
 
 ## Debugging Checklist
 
 - Inspect raw tool-call deltas from the upstream model.
 - Confirm the proxy emits a single flushed sanitized JSON blob.
 - Verify `finish_reason` handling for tool calls.
-- Compare sanitized output with the MCP tool schema Claude Code receives.
+- Compare sanitized output with the tool schema Claude Code receives.

@@ -6,8 +6,10 @@ import json
 import os
 import pathlib
 import platform
+import socket
 import subprocess
 import sys
+import time
 
 from textual import on
 from textual.app import ComposeResult
@@ -585,85 +587,64 @@ class ReviewScreen(Screen):
             self.app.pop_screen()
 
 
-# ─── 8. Smoke Test ─────────────────────────────────────────────
+# ─── 8. Smoke Test ────────────────────────────────────────────
 
 class SmokeScreen(Screen):
 
-    _done: bool = False
     _passed: bool = False
-    _proxy_proc: subprocess.Popen[str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("[7 / 10]  Smoke Test", classes="step_header")
         with Container(classes="content_panel", id="smoke_content"):
-            yield Static("Starting proxy and testing connection …", id="status")
-            yield ProgressBar(total=100, id="progress")
-            yield RichLog(id="log", wrap=True)
-        with Horizontal(classes="button_bar"):
+            yield Static(
+                "Start the proxy in another terminal, then press Test.",
+                id="status",
+            )
+            yield RichLog(id="log", wrap=True, markup=True)
+        with Horizontal(classes="button_bar", id="choice_bar"):
             yield Button("←  Back", id="back")
+        with Horizontal(classes="button_bar", id="action_bar"):
+            yield Button("🧪  Test: curl /health", id="btn_test")
             yield Button("Continue  →", variant="success", id="next", disabled=True)
 
     def on_mount(self) -> None:
-        self.set_timer(0.3, self._run)
+        self._show_commands()
 
-    def _run(self) -> None:
-        import time
+    def _show_commands(self) -> None:
+        log = self.query_one("#log", RichLog)
+        s = self.app.state
+        log.write("[bold]Start the proxy in another terminal:[/bold]")
+        log.write("")
+        log.write("Run the command appropriate for your setup.")
+        log.write(f"See:  [rgb(0,188,212)]docs/start-proxy.md[/rgb(0,188,212)]  for full instructions.")
+        log.write("")
+        log.write(f"Dashboard: http://localhost:{s.port}/dashboard")
+
+    def _test_proxy(self) -> None:
         import urllib.request
 
-        progress = self.query_one("#progress", ProgressBar)
-        log = self.query_one("#log", RichLog)
         status = self.query_one("#status", Static)
+        log = self.query_one("#log", RichLog)
         s = self.app.state
-        repo = get_repo_root()
-        py_name = "Scripts" if platform.system() == "Windows" else "bin"
-        py_bin = "python.exe" if platform.system() == "Windows" else "python"
-        python = repo / ".venv" / py_name / py_bin
-        proxy_script = repo / "start_proxy.py"
 
-        progress.update(progress=15)
-        log.write(f"Starting proxy on port {s.port} …")
+        log.write("")
+        log.write(f"Checking http://127.0.0.1:{s.port}/health …")
 
-        env = os.environ.copy()
-        env.pop("OPENAI_API_KEY", None)
-        env.pop("ANTHROPIC_API_KEY", None)
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        env["OPENAI_API_KEY"] = s.api_key
-
-        self._proxy_proc = subprocess.Popen(
-            [str(python), str(proxy_script)],
-            cwd=str(repo),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            text=True,
-        )
-
-        # Wait for health endpoint
-        ok = False
-        for i in range(20):
-            time.sleep(0.5)
-            progress.update(progress=15 + i * 4)
-            try:
-                req = urllib.request.Request(f"http://127.0.0.1:{s.port}/health")
-                urllib.request.urlopen(req, timeout=2)
-                ok = True
-                break
-            except Exception:
-                pass
-
-        if not ok:
-            progress.update(progress=100)
-            status.update("[red]✘  Proxy did not start[/]")
-            log.write(f"[red]Check that port {s.port} is free.[/red]")
-            if self._proxy_proc:
-                self._proxy_proc.kill()
-                self._proxy_proc.wait()
-            self._done = True
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{s.port}/health")
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            status.update(f"[red]✘  Proxy not responding on port {s.port}[/]")
+            log.write("[red]Proxy not running.[/red]")
+            log.write("Steps:")
+            log.write("  1. Start the proxy (see docs/START-PROXY.md)")
+            log.write("  2. Wait for 'Uvicorn running' message")
+            log.write("  3. Press 'Test: curl /health' again")
             return
 
-        log.write(f"[green]Proxy running on port {s.port}[/green]")
-        progress.update(progress=85)
+        log.write("[green]Health check passed[/green]")
 
+        # Test connection
         try:
             req = urllib.request.Request(f"http://127.0.0.1:{s.port}/test-connection")
             resp = urllib.request.urlopen(req, timeout=30)
@@ -672,33 +653,30 @@ class SmokeScreen(Screen):
         except Exception as e:
             status_val = f"error: {e}"
 
-        progress.update(progress=100)
-        self._done = True
-
-        if self._proxy_proc:
-            self._proxy_proc.terminate()
-            try:
-                self._proxy_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proxy_proc.kill()
-            self._proxy_proc = None
-
         if status_val == "success":
             self._passed = True
             s.smoke_test_passed = True
             status.update("[green]✔  All tests passed[/]")
-            log.write("Ready to go!")
+            log.write("[green]Test connection succeeded.[/green]")
+            log.write(f"Open http://localhost:{s.port}/dashboard")
             self.query_one("#next", Button).disabled = False
         else:
             status.update(f"[red]✘  Test failed: {status_val}[/]")
+            log.write(f"[red]Test connection failed: {status_val}[/red]")
             log.write("Check your API key and Nebius connectivity.")
 
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "next" and self._passed:
+        eid = event.button.id or ""
+        if eid == "next" and self._passed:
             self.app.push_screen(ShellScreen())
-        elif event.button.id == "back":
+        elif eid == "back":
             self.app.pop_screen()
+        elif eid == "btn_test":
+            log = self.query_one("#log", RichLog)
+            log.clear()
+            self._show_commands()
+            self._test_proxy()
 
 
 # ─── 9. Shell Config ───────────────────────────────────────────

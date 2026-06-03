@@ -1,6 +1,6 @@
 # Claude Code Proxy for Nebius
 
-A Claude Code → Nebius bridge. Accepts Claude-Code requests, converts to OpenAI-compatible requests, and converts responses back. Includes bundled MCP servers for local tools.
+A Claude Code → Nebius bridge. Accepts Claude-Code requests, converts to OpenAI-compatible requests, and converts responses back.
 
 ## Quick Start (the easy way)
 
@@ -68,17 +68,17 @@ Open http://localhost:8083/dashboard for usage, latency, cost, and model routing
 
 ## Documentation
 
-For full configuration options, model details, architecture, MCP setup, troubleshooting, and the complete feature list, see **[docs/README.md](docs/README.md)**.
+For full configuration options, model details, architecture, troubleshooting, and the complete feature list, see **[docs/README.md](docs/README.md)**.
 
 | Doc | What's inside |
 |-----|-------------|
 | [docs/README.md](docs/README.md) | Full reference index — everything |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System flow, key files, design |
 | [docs/TOOL_CALL_FORMAT.md](docs/TOOL_CALL_FORMAT.md) | Claude SSE tool-call streaming |
-| [docs/MCP_SERVER_GUIDE.md](docs/MCP_SERVER_GUIDE.md) | MCP server compatibility |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Dashboard configuration |
 | [docs/SHELL_FUNCTION.md](docs/SHELL_FUNCTION.md) | Shell shortcut reference |
 | [docs/BINARY_PACKAGING.md](docs/BINARY_PACKAGING.md) | Standalone binary notes |
+| [docs/MANUAL_SETUP.md](docs/MANUAL_SETUP.md) | Manual setup (skip the TUI) |
 
 ## Features (high-level)
 
@@ -89,7 +89,6 @@ For full configuration options, model details, architecture, MCP setup, troubles
 - Tool-call JSON repair and deduplication
 - Context auto-truncation (never orphans tool results)
 - Observability dashboard with cost tracking
-- Bundled MCP servers
 
 ## Scope
 
