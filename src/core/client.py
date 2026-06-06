@@ -47,6 +47,54 @@ def _maybe_drop_reasoning_effort(req: Dict[str, Any], error: Exception) -> bool:
     return True
 
 
+_CONTEXT_LEN_MARKERS = (
+    "context length",
+    "context_length",
+    "maximum context",
+    "context window",
+    "reduce the length",
+    "too many tokens",
+    "too long",
+)
+
+
+def _is_context_length_error(error: Exception) -> bool:
+    detail = str(error).lower()
+    return any(marker in detail for marker in _CONTEXT_LEN_MARKERS)
+
+
+def _maybe_retrim_context(req: Dict[str, Any], error: Exception) -> bool:
+    """On an upstream context-length 400, drop the oldest messages (using the
+    existing safe trimmer, which preserves the system message, the latest turn,
+    and atomic tool pairs) and signal a single retry. Returns True if trimmed.
+
+    Bounded by the caller's retry loop and the `dropped > 0` guard, so it cannot
+    loop forever: once nothing more can be dropped, the error is surfaced.
+    """
+    if not _is_context_length_error(error):
+        return False
+    messages = req.get("messages")
+    if not isinstance(messages, list) or len(messages) <= 2:
+        return False
+    # Imported lazily to avoid a request_converter <-> client import cycle.
+    from src.conversion.request_converter import (
+        _estimate_prompt_tokens,
+        _trim_messages_to_fit,
+    )
+
+    estimate = _estimate_prompt_tokens(messages)
+    target = max(int(estimate * 0.7), 1)  # force shedding ~30% of the prompt
+    trimmed, dropped = _trim_messages_to_fit(messages, target, reserve=2048)
+    if dropped <= 0:
+        return False
+    req["messages"] = trimmed
+    logger.warning(
+        "Upstream rejected for context length; dropped %d oldest message(s) and retrying.",
+        dropped,
+    )
+    return True
+
+
 class OpenAIClient:
     """Async OpenAI client with cancellation support."""
 
@@ -152,6 +200,8 @@ class OpenAIClient:
                 except BadRequestError as e:
                     if _maybe_drop_reasoning_effort(request, e):
                         continue
+                    if _maybe_retrim_context(request, e):
+                        continue
                     self._log_openai_error(e)
                     raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
                 except (RateLimitError, APIConnectionError, APITimeoutError, APIError) as e:
@@ -211,6 +261,8 @@ class OpenAIClient:
                     raise HTTPException(status_code=401, detail=self.classify_openai_error(str(e)))
                 except BadRequestError as e:
                     if _maybe_drop_reasoning_effort(stream_request, e):
+                        continue
+                    if _maybe_retrim_context(stream_request, e):
                         continue
                     self._log_openai_error(e)
                     raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
@@ -285,6 +337,13 @@ class OpenAIClient:
         # Billing issues
         if "billing" in error_str or "payment" in error_str:
             return "Billing issue. Please check your OpenAI account billing status."
+
+        # Context window exceeded (after the proxy already tried to shed messages)
+        if any(m in error_str for m in _CONTEXT_LEN_MARKERS):
+            return (
+                "Input exceeds the model's context window. Lower the conversation "
+                "size, or set the correct <ROLE>_MODEL_CONTEXT_LIMIT for this backend."
+            )
 
         # Default: return original message
         return str(error_detail)

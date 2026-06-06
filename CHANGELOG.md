@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reasoning, and stop-reason changes.
 
 ### Fixed
+- Self-heal on upstream context-length 400s: the proxy now detects when a
+  backend rejects a request for exceeding its context window, sheds the oldest
+  messages with the existing safe trimmer (system prompt, latest turn, and tool
+  pairs preserved) and retries once, instead of surfacing a hard error. If it
+  still doesn't fit, a clear message points at `<ROLE>_MODEL_CONTEXT_LIMIT`.
 - Strip Kimi-K2's native tool-call control tokens (`<|tool_call_begin|>`,
   `<|tool_call_argument_begin|>`, `functions.NAME:N`, ...) that leak into tool
   arguments when a tool is forwarded without a real parameter schema (e.g. the
