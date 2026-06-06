@@ -8,6 +8,7 @@ from src.conversion.computer_use import (
     convert_schema_less_tools,
     is_computer_use_tool,
 )
+from src.conversion.server_tools import SEARCH_TOOL_PARAMETERS, is_search_tool
 from src.core.client import reasoning_effort_supported
 from src.core.config import config
 from src.core.constants import Constants
@@ -645,7 +646,13 @@ def convert_claude_to_openai(
                 # upstream cannot break the Nebius/vLLM prefix cache.
                 # NOTE: We deliberately do NOT sort the outer tools list —
                 # tool order is observable by the model.
-                params = tool.input_schema or {"type": "object", "properties": {}}
+                # Search tools (web_search/WebSearch) are executed by the proxy
+                # (server_tools); force a real {query} schema so the backend emits
+                # a clean call instead of an empty / control-token blob.
+                if is_search_tool(tool):
+                    params = SEARCH_TOOL_PARAMETERS
+                else:
+                    params = tool.input_schema or {"type": "object", "properties": {}}
                 openai_tools.append(
                     {
                         "type": Constants.TOOL_FUNCTION,

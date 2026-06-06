@@ -150,6 +150,22 @@ _XML_BROAD_PATTERN = re.compile(
 )
 
 
+# Kimi-K2 native tool-call control tokens, e.g.:
+#   <|tool_calls_section_begin|> <|tool_call_begin|> functions.web_search:0
+#   <|tool_call_argument_begin|> {"query": "..."} <|tool_call_end|> <|tool_calls_section_end|>
+# These leak into `arguments` when a tool is forwarded to Kimi without a real
+# parameter schema (e.g. Anthropic server tools like web_search). Extract the
+# inner JSON and the real tool name.
+_KIMI_ARG_PATTERN = re.compile(
+    r"<\|tool_call_argument_begin\|>\s*(\{.*?\})\s*<\|tool_call_end\|>", re.DOTALL
+)
+_KIMI_NAME_PATTERN = re.compile(r"functions\.([A-Za-z0-9_.\-]+):\d+")
+_KIMI_TOKEN_PATTERN = re.compile(
+    r"<\|tool_calls?_section_(?:begin|end)\|>|<\|tool_call_(?:begin|end)\|>|"
+    r"<\|tool_call_argument_begin\|>|functions\.[A-Za-z0-9_.\-]+:\d+"
+)
+
+
 def _clean_tool_name(raw_name: str) -> str:
     """Extract clean tool name by stripping any XML tags, trailing parens, etc."""
     # Strip from first XML-like tag onwards
@@ -174,6 +190,32 @@ def _sanitize_tool_arguments(name: str, arguments_str: str) -> tuple:
     """
     raw_name = name or ""
     raw_args = arguments_str or ""
+
+    # ── Step 0a: Kimi-K2 native control-token format ──
+    if "<|tool_call" in raw_args or "<|tool_call" in raw_name:
+        combined = raw_args if "<|tool_call" in raw_args else raw_name
+        name_m = _KIMI_NAME_PATTERN.search(combined)
+        kimi_name = _clean_tool_name(raw_name)
+        if name_m and not re.fullmatch(r"[A-Za-z0-9_]+", kimi_name or ""):
+            kimi_name = name_m.group(1)
+        arg_m = _KIMI_ARG_PATTERN.search(combined)
+        if arg_m:
+            inner = arg_m.group(1).strip()
+            try:
+                json.loads(inner)
+                logger.info(f"[SANITIZE] Kimi control tokens stripped: name={kimi_name}")
+                return kimi_name, inner
+            except json.JSONDecodeError:
+                pass
+        # Fallback: strip all Kimi tokens and recover the first JSON object.
+        stripped = _KIMI_TOKEN_PATTERN.sub(" ", combined).strip()
+        jm = re.search(r"\{.*\}", stripped, re.DOTALL)
+        if jm:
+            try:
+                json.loads(jm.group(0))
+                return kimi_name, jm.group(0)
+            except json.JSONDecodeError:
+                pass
 
     # ── Step 0: Try XML extraction on ALL sources (args, name, combined) ──
     # Check args string, name, and combined for XML arg patterns

@@ -72,6 +72,25 @@ class Config:
         self.thinking_display_override = os.environ.get(
             "THINKING_DISPLAY_OVERRIDE", ""
         ).strip().lower()
+
+        # --- Server-side web search (Tavily) ---
+        # When TAVILY_API_KEY is set, the proxy executes web_search/WebSearch
+        # tool calls itself (Claude Code's search can't run behind a non-Anthropic
+        # backend) and feeds results back to the model. Unset = feature inert.
+        self.tavily_api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+        self.server_search_enabled = os.environ.get(
+            "SERVER_SEARCH_ENABLED", "true"
+        ).lower() in ("1", "true", "yes")
+        try:
+            self.tavily_max_results = int(os.environ.get("TAVILY_MAX_RESULTS", "5") or 5)
+        except ValueError:
+            self.tavily_max_results = 5
+        try:
+            self.server_search_max_iters = int(
+                os.environ.get("SERVER_SEARCH_MAX_ITERS", "4") or 4
+            )
+        except ValueError:
+            self.server_search_max_iters = 4
         self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
             "1",
             "true",

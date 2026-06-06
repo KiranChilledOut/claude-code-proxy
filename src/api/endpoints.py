@@ -15,6 +15,7 @@ from src.conversion.request_converter import (
     convert_claude_to_openai,
     count_claude_request_tokens,
 )
+from src.conversion import server_tools
 from src.conversion.response_converter import (
     convert_openai_streaming_to_claude_with_cancellation,
     convert_openai_to_claude_response,
@@ -229,6 +230,45 @@ async def create_message(
         estimated_input_tokens = _estimate_prompt_tokens(
             openai_request.get("messages", []), include_safety_buffer=False
         )
+
+        # Server-side web search: when a search tool is offered and Tavily is
+        # configured, the proxy executes the search itself in a bounded loop and
+        # returns the final answer (Claude Code's search can't run behind a
+        # non-Anthropic backend). Only engaged when a search tool is present, so
+        # all other requests stay on the normal streaming path untouched.
+        if server_tools.request_has_search_tool(request):
+            openai_response = await server_tools.run_search_loop(
+                openai_request, openai_client, request_id
+            )
+            claude_response = convert_openai_to_claude_response(openai_response, request)
+            _record_message_observability(
+                request_id=request_id,
+                session_id=session_id,
+                session_name=session_name,
+                started_at=started_at,
+                started_at_unix=started_at_unix,
+                start_monotonic=start_monotonic,
+                request=request,
+                backend_model=backend_model,
+                stream=bool(request.stream),
+                status="success",
+                http_status=200,
+                usage=claude_response.get("usage"),
+                stop_reason=claude_response.get("stop_reason"),
+                tool_calls=_extract_tool_calls_from_claude_response(claude_response),
+            )
+            if request.stream:
+                return StreamingResponse(
+                    optimized_response_to_sse(claude_response),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    },
+                )
+            return claude_response
 
         if request.stream:
             # Streaming response - wrap in error handling

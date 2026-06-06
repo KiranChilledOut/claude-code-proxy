@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.conversion.response_converter import (
+    _finalize_tool_args,
     _sanitize_tool_arguments,
     convert_openai_streaming_to_claude_with_cancellation,
     convert_openai_to_claude_response,
@@ -180,3 +181,45 @@ async def test_streaming_flushes_sanitized_tool_arguments_on_finish():
     assert '"name": "bash"' in serialized
     assert '"partial_json": "{\\"command\\": \\"ls -la\\"}"' in serialized
     assert '"stop_reason": "tool_use"' in serialized
+
+
+# --------------------------------------------------------------------------
+# Kimi-K2 native control-token tool calls (leak when a tool is forwarded
+# without a real parameter schema, e.g. Anthropic server tools like web_search)
+# --------------------------------------------------------------------------
+def test_sanitize_strips_kimi_control_tokens():
+    blob = (
+        ' <|tool_calls_section_begin|> <|tool_call_begin|> functions.web_search:0 '
+        '<|tool_call_argument_begin|> {"query": "spacex launch date"} '
+        '<|tool_call_end|> <|tool_calls_section_end|>'
+    )
+    name, args = _sanitize_tool_arguments("web_search", blob)
+    assert name == "web_search"
+    assert json.loads(args) == {"query": "spacex launch date"}
+
+
+def test_sanitize_kimi_name_from_function_token():
+    # Name leaks into the blob; clean it from functions.NAME:N
+    blob = (
+        '<|tool_call_begin|> functions.web_fetch:1 <|tool_call_argument_begin|> '
+        '{"url": "https://example.com"} <|tool_call_end|>'
+    )
+    name, args = _sanitize_tool_arguments("functions.web_fetch:1", blob)
+    assert name == "web_fetch"
+    assert json.loads(args) == {"url": "https://example.com"}
+
+
+def test_finalize_tool_args_kimi_roundtrip():
+    blob = (
+        '<|tool_call_argument_begin|> {"query": "hello world"} <|tool_call_end|>'
+    )
+    name, repaired, parsed = _finalize_tool_args("web_search", blob)
+    assert name == "web_search"
+    assert parsed == {"query": "hello world"}
+
+
+def test_sanitize_clean_args_unaffected():
+    # Normal clean JSON must pass through untouched.
+    name, args = _sanitize_tool_arguments("WebSearch", '{"query": "x"}')
+    assert name == "WebSearch"
+    assert json.loads(args) == {"query": "x"}

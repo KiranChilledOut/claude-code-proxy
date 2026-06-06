@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Server-side web search (Tavily). When `TAVILY_API_KEY` is set, the proxy
+  executes `web_search`/`WebSearch` tool calls itself in a bounded loop and
+  feeds results back to the model, returning the final answer. Fixes "Did 0
+  searches" — Claude Code's search can't run behind a non-Anthropic backend.
+  Search tools are also forwarded with a real `{query}` schema. Only engaged
+  when a search tool is present; all other requests are unchanged. Knobs:
+  `SERVER_SEARCH_ENABLED`, `TAVILY_MAX_RESULTS`, `SERVER_SEARCH_MAX_ITERS`.
 - Honor `thinking.display` for adaptive thinking (Opus 4.7/4.8). Thinking text
   is surfaced only when `display` is `"summarized"`; adaptive mode defaults to
   `"omitted"` (matching Anthropic), so the backend's reasoning is no longer
@@ -41,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reasoning, and stop-reason changes.
 
 ### Fixed
+- Strip Kimi-K2's native tool-call control tokens (`<|tool_call_begin|>`,
+  `<|tool_call_argument_begin|>`, `functions.NAME:N`, ...) that leak into tool
+  arguments when a tool is forwarded without a real parameter schema (e.g. the
+  Anthropic `web_search` server tool). The inner JSON is now extracted so the
+  client receives clean arguments instead of a token blob.
 - Extended-thinking config now understands Anthropic's real wire shape
   `{"type": "enabled"|"disabled", "budget_tokens": N}` (via `is_enabled()`),
   in addition to the legacy `{"enabled": bool}`. Previously `{"type":"disabled"}`
