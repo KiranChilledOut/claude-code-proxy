@@ -122,6 +122,22 @@ class Config:
             "ENABLE_FILEPATH_EXTRACTION_MOCK", "true"
         ).lower() in ("1", "true", "yes")
 
+        # Codex proxy configuration
+        self.codex_enabled = os.environ.get("CODEX_ENABLED", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.codex_tool_compat = os.environ.get("CODEX_TOOL_COMPAT", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.codex_session_ttl_seconds = int(os.environ.get("CODEX_SESSION_TTL_SECONDS", "3600"))
+        self.codex_websocket_fallback = os.environ.get(
+            "CODEX_WEBSOCKET_FALLBACK", "true"
+        ).lower() in ("1", "true", "yes")
+
         # Statusline percentage offset: added to the computed percentage_used
         # before it is returned from /api/observability/context-usage. Use this
         # to make the statusline read higher or lower than the real value.

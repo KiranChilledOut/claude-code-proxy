@@ -67,5 +67,16 @@ class ModelManager:
             # Default to big model for unknown models
             return self.config.big_model
 
+    def map_codex_model(self, codex_model: str) -> str:
+        """Map Codex (OpenAI) model names to backend OpenAI model names."""
+        lower = codex_model.lower()
+        if "mini" in lower:
+            return self.config.small_model
+        # "gpt-4", "gpt-5", "o1", etc. all map to big model
+        if codex_model.startswith("gpt-") or codex_model.startswith("o1-") or codex_model.startswith("o3-"):
+            return self.config.big_model
+        # Default to big model for unknown models
+        return self.config.big_model
+
 
 model_manager = ModelManager(config)

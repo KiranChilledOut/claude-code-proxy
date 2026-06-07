@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Search-tool system nudge: when a web-search tool is offered and Tavily is
+- Codex proxy stream converter (Unit 5): OpenAI SSE → Responses API SSE events with state machine for text/tool buffering, event ordering, and usage accumulation.
+- Codex proxy response converter (Unit 4): OpenAI Chat Completion → Responses API output items, usage mapping, and tool name remapping.
+- Codex proxy request converter (Unit 3): Responses API → OpenAI Chat Completions (instructions→system, input items→messages, reasoning effort, model mapping).
+- Codex proxy foundation (Unit 1): Pydantic models, config vars, model mapping.
   configured, the proxy injects a short system-prompt line telling the model to
   call web search on its own turn (not batched with other tools), so it can be
   executed server-side. Scoped — only added when a search tool is present.
