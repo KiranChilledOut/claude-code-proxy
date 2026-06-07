@@ -540,3 +540,29 @@ def test_codex_tools_to_openai_is_tools_property():
     raw = ["exec_command"]
     ctx = parse_codex_tools(raw)
     assert codex_tools_to_openai(ctx) is ctx.tools
+
+
+def test_flat_function_tool_format_normalised():
+    """Codex CLI sends {"type":"function","name":"X","parameters":P} without nested
+    'function' dict; we must normalise to OpenAI format."""
+    raw = [
+        {
+            "type": "function",
+            "name": "exec_command",
+            "description": "Runs a command in a PTY",
+            "parameters": {
+                "type": "object",
+                "properties": {"cmd": {"type": "string"}},
+                "required": ["cmd"],
+            },
+        }
+    ]
+    ctx = parse_codex_tools(raw)
+    tools = codex_tools_to_openai(ctx)
+    assert len(tools) == 1
+    t = tools[0]
+    assert t["type"] == "function"
+    assert "function" in t
+    assert t["function"]["name"] == "exec_command"
+    assert t["function"]["description"] == "Runs a command in a PTY"
+    assert "parameters" in t["function"]

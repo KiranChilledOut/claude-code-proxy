@@ -331,17 +331,30 @@ def parse_codex_tools(raw_tools: List[Any]) -> CodexToolContext:
                 )
             continue
 
-        # --- Standard function tools (passthrough) ---
+        # --- Standard function tools (passthrough with Codex flat-format normalisation) ---
+        # Codex CLI 0.130+ sends flat tools:
+        #   {"type":"function","name":"X","description":"...","parameters":{...}}
+        # OpenAI format requires nested "function" dict.
         if tool_type == "function" or "function" in tool:
             func_block = tool.get("function", {})
-            func_name = func_block.get("name", "") if isinstance(func_block, dict) else getattr(func_block, "name", "")
-            if func_name:
-                ctx.function_tools[func_name] = CodexFunctionToolSpec(
-                    namespace=None,
-                    name=func_name,
-                    description=func_block.get("description") if isinstance(func_block, dict) else None,
-                    parameters=func_block.get("parameters") if isinstance(func_block, dict) else None,
-                )
+            if not func_block and tool.get("name"):
+                # Flat format — normalise to nested
+                func_block = {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                }
+                if "parameters" in tool:
+                    func_block["parameters"] = tool["parameters"]
+                tool = {"type": "function", "function": func_block}
+            elif isinstance(func_block, dict):
+                func_name = func_block.get("name", "")
+                if func_name:
+                    ctx.function_tools[func_name] = CodexFunctionToolSpec(
+                        namespace=None,
+                        name=func_name,
+                        description=func_block.get("description") or None,
+                        parameters=func_block.get("parameters") or None,
+                    )
             ctx._tools.append(tool)
             continue
 
