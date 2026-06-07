@@ -1,6 +1,6 @@
-# Claude Code Proxy for Nebius
+# Claude Code & Codex Proxy for Nebius
 
-A Claude Code → Nebius bridge. Accepts Claude-Code requests, converts to OpenAI-compatible requests, and converts responses back.
+A Claude Code + Codex CLI → Nebius bridge. Accepts Claude `/v1/messages` and Codex `/v1/responses` requests, converts them to OpenAI-compatible calls, and converts responses back.
 
 ## Quick Start (the easy way)
 
@@ -37,7 +37,8 @@ Then open http://localhost:8083/dashboard for the observability dashboard.
 
 - Python 3.9+
 - Nebius API key (from https://nebius.com)
-- Claude Code (optional; install from Anthropic)
+- Claude Code or Codex CLI (optional; install from Anthropic / OpenAI)
+- Tavily API key (optional; enables server-side web search — see `.env.example`)
 
 ## Quick Start (manual)
 
@@ -79,11 +80,14 @@ For full configuration options, model details, architecture, troubleshooting, an
 | [docs/SHELL_FUNCTION.md](docs/SHELL_FUNCTION.md) | Shell shortcut reference |
 | [docs/BINARY_PACKAGING.md](docs/BINARY_PACKAGING.md) | Standalone binary notes |
 | [docs/MANUAL_SETUP.md](docs/MANUAL_SETUP.md) | Manual setup (skip the TUI) |
+| [docs/codex/CODEX_STATUSLINE.md](docs/codex/CODEX_STATUSLINE.md) | Codex CLI proxy routing and statusline config |
 
 ## Features (high-level)
 
 - Claude `/v1/messages` proxying to Nebius OpenAI-compatible endpoints
-- Streaming SSE
+- Codex `/v1/responses` proxying to Nebius OpenAI-compatible endpoints
+- Streaming SSE (Claude and Codex)
+- Server-side web search via Tavily (executes `web_search` tool calls, returns results to the model)
 - Automatic model routing (big / middle / small / vision)
 - Built-in request optimizations for Claude Code housekeeping
 - Tool-call JSON repair and deduplication
