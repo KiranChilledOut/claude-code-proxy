@@ -67,6 +67,48 @@ ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_AUTH_TOKEN=claude-local claud
 
 Open http://localhost:8083/dashboard for usage, latency, cost, and model routing info.
 
+## Quick Start (Codex CLI)
+
+To route Codex CLI through the proxy, edit `~/.codex/config.toml` (macOS) or `%APPDATA%\codex\config.toml` (Windows):
+
+```toml
+model = "nebius/moonshotai/Kimi-K2.6"
+model_provider = "nebius"
+
+[model_providers.nebius]
+name = "Nebius Proxy"
+base_url = "http://127.0.0.1:8083/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+
+[projects."/path/to/your/project"]
+trust_level = "trusted"
+
+[tui]
+status_line = ["model-with-reasoning", "task-progress", "permissions", "approval-mode", "fast-mode"]
+status_line_use_colors = true
+```
+
+Set your Nebius API key (the proxy forwards it to the backend):
+
+```bash
+export OPENAI_API_KEY="nb-..."  # macOS / Linux
+```
+
+```powershell
+$env:OPENAI_API_KEY = "nb-..."  # Windows PowerShell
+```
+
+Then open a project directory and run:
+
+```bash
+cd /path/to/your/project && codex --full-auto
+```
+
+Codex will use the proxy for all `/v1/responses` calls, with server-side web search (if Tavily is configured) and model routing.
+
+See [docs/codex/CODEX_STATUSLINE.md](docs/codex/CODEX_STATUSLINE.md) for full statusline configuration options.
+
 ## Documentation
 
 For full configuration options, model details, architecture, troubleshooting, and the complete feature list, see **[docs/README.md](docs/README.md)**.
