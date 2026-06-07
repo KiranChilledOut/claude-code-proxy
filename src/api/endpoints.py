@@ -1,13 +1,20 @@
 import json
 import os
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.codex.models import ResponsesItem, ResponsesRequest, ResponsesResponse, ResponsesUsage
+from src.codex.request_converter import convert_responses_to_openai_chat
+from src.codex.response_converter import convert_openai_to_responses
+from src.codex.session import SessionStore
+from src.codex.stream_converter import convert_openai_sse_to_responses_sse
+from src.codex.tools_compat import parse_codex_tools
 from src.api.optimization_handlers import optimized_response_to_sse, try_local_optimization
 from src.conversion.request_converter import (
     _count_tokens_text,
@@ -42,9 +49,35 @@ openai_client = OpenAIClient(
     max_retries=config.max_retries,
 )
 
+codex_session_store = SessionStore(config.codex_session_ttl_seconds)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_tool_calls_from_codex_output(output_items: list) -> list:
+    """Extract tool-call metadata from Codex output items for observability."""
+    tool_calls = []
+    for item in output_items:
+        if isinstance(item, dict):
+            if item.get("type") == "function_call":
+                tool_calls.append({
+                    "tool_id": item.get("call_id", ""),
+                    "tool_name": item.get("name", ""),
+                    "arguments": item.get("arguments", ""),
+                    "status": item.get("status", "emitted"),
+                    "sanitized": False,
+                })
+        elif hasattr(item, "type") and item.type == "function_call":
+            tool_calls.append({
+                "tool_id": getattr(item, "call_id", "") or "",
+                "tool_name": getattr(item, "name", "") or "",
+                "arguments": getattr(item, "arguments", "") or "",
+                "status": getattr(item, "status", "emitted") or "emitted",
+                "sanitized": False,
+            })
+    return tool_calls
 
 
 def _extract_tool_calls_from_claude_response(claude_response: dict) -> list:
@@ -163,6 +196,183 @@ async def validate_api_key(
         raise HTTPException(
             status_code=401, detail="Invalid API key. Please provide a valid Anthropic API key."
         )
+
+
+# ===========================================================================
+# Codex /v1/responses endpoints
+# ===========================================================================
+
+@router.get("/v1/responses")
+async def codex_responses_get(http_request: Request):
+    """Codex CLI first tries WebSocket; return 426 to force HTTP fallback."""
+    if config.codex_websocket_fallback and http_request.headers.get("upgrade", "").lower() == "websocket":
+        return Response(status_code=426)
+    return Response(status_code=405)
+
+
+@router.post("/v1/responses")
+async def create_response(
+    request: ResponsesRequest, http_request: Request, _: None = Depends(validate_api_key)
+):
+    """Codex Responses API endpoint."""
+    request_id = str(uuid.uuid4())
+    started_at = _utc_now_iso()
+    started_at_unix = time.time()
+    start_monotonic = time.monotonic()
+    backend_model = None
+
+    # Session ID from request or headers
+    session_id = None
+    if request.previous_response_id:
+        session_id = request.previous_response_id
+
+    try:
+        # Look up session if previous_response_id provided
+        session = None
+        session_items: list = []
+        if request.previous_response_id:
+            session = await codex_session_store.get(request.previous_response_id)
+            if session:
+                session_items = session.output_items + session.input_items
+
+        # Parse tools
+        tool_ctx = None
+        if request.tools and config.codex_tool_compat:
+            tool_ctx = parse_codex_tools(request.tools)
+
+        # Convert request
+        openai_request = convert_responses_to_openai_chat(
+            request,
+            session_items=session_items,
+            tool_ctx=tool_ctx,
+            model_manager=model_manager,
+        )
+        backend_model = openai_request.get("model")
+
+        # Non-streaming
+        if not request.stream:
+            openai_response = await openai_client.create_chat_completion(openai_request, request_id)
+            codex_response = convert_openai_to_responses(
+                openai_response,
+                request_model=request.model,
+                previous_id=session_id,
+                tool_ctx=tool_ctx,
+            )
+
+            # Observability
+            usage_dict = {}
+            if hasattr(codex_response.usage, "model_dump"):
+                usage_dict = codex_response.usage.model_dump()
+            else:
+                usage_dict = {
+                    "input_tokens": codex_response.usage.input_tokens,
+                    "output_tokens": codex_response.usage.output_tokens,
+                    "total_tokens": codex_response.usage.total_tokens,
+                }
+            observability_recorder.record_request(
+                request_id=request_id,
+                session_id=session_id,
+                session_name=None,
+                started_at=started_at,
+                started_at_unix=started_at_unix,
+                completed_at=_utc_now_iso(),
+                base_url=config.openai_base_url,
+                claude_model=request.model,
+                backend_model=backend_model,
+                stream=False,
+                status="success",
+                http_status=200,
+                latency_ms=(time.monotonic() - start_monotonic) * 1000,
+                usage=usage_dict,
+                tool_calls=_extract_tool_calls_from_codex_output(codex_response.output),
+            )
+
+            # Save session (non-streaming only)
+            if isinstance(request.input, list):
+                input_items = list(request.input)
+            else:
+                input_items = [ResponsesItem(type="text", text=request.input)]
+            await codex_session_store.put(
+                codex_response.id,
+                input_items,
+                codex_response.output,
+                previous_id=session_id,
+            )
+
+            return codex_response
+
+        # Streaming
+        openai_stream = openai_client.create_chat_completion_stream(openai_request, request_id)
+
+        async def codex_sse_stream():
+            stream_status = "success"
+            stream_error = None
+            try:
+                async for event in convert_openai_sse_to_responses_sse(
+                    openai_stream,
+                    request_model=request.model,
+                    tool_ctx=tool_ctx,
+                ):
+                    yield event
+            except Exception as exc:
+                stream_status = "error"
+                stream_error = str(exc)
+                raise
+            finally:
+                observability_recorder.record_request(
+                    request_id=request_id,
+                    session_id=session_id,
+                    session_name=None,
+                    started_at=started_at,
+                    started_at_unix=started_at_unix,
+                    completed_at=_utc_now_iso(),
+                    base_url=config.openai_base_url,
+                    claude_model=request.model,
+                    backend_model=backend_model,
+                    stream=True,
+                    status=stream_status,
+                    http_status=200 if stream_status == "success" else 500,
+                    latency_ms=(time.monotonic() - start_monotonic) * 1000,
+                    error_type=None if stream_status == "success" else type(stream_error).__name__,
+                    error_message=stream_error,
+                )
+
+        return StreamingResponse(
+            codex_sse_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Codex response error: {e}")
+        logger.error(traceback.format_exc())
+        error_response = ResponsesResponse(
+            id=str(uuid.uuid4()),
+            model=request.model,
+            output=[ResponsesItem(type="message", role="assistant", content=f"Error: {e}")],
+            status="failed",
+            usage=ResponsesUsage(input_tokens=0, output_tokens=0, total_tokens=0),
+        )
+        observability_recorder.record_request(
+            request_id=request_id,
+            session_id=session_id,
+            session_name=None,
+            started_at=started_at,
+            started_at_unix=started_at_unix,
+            completed_at=_utc_now_iso(),
+            base_url=config.openai_base_url,
+            claude_model=request.model,
+            backend_model=backend_model,
+            stream=False,
+            status="error",
+            http_status=500,
+            latency_ms=(time.monotonic() - start_monotonic) * 1000,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        return error_response
 
 
 @router.post("/v1/messages")
@@ -773,6 +983,7 @@ async def root():
         },
         "endpoints": {
             "messages": "/v1/messages",
+            "responses": "/v1/responses",
             "models": "/v1/models",
             "count_tokens": "/v1/messages/count_tokens",
             "health": "/health",
