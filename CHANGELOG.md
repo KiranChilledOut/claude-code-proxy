@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Codex proxy tool compatibility (Unit 2): `CodexToolContext` and `tools_compat.py` with parsing, conversion, and remapping for string tools, custom tools (multi-suffix proxy functions), namespace tools (flatten/unflatten), built-in tools (`web_search`/`local_shell`/`computer_use`), and standard function passthrough.
 - Codex proxy stream converter (Unit 5): OpenAI SSE → Responses API SSE events with state machine for text/tool buffering, event ordering, and usage accumulation.
 - Codex proxy response converter (Unit 4): OpenAI Chat Completion → Responses API output items, usage mapping, and tool name remapping.
 - Codex proxy request converter (Unit 3): Responses API → OpenAI Chat Completions (instructions→system, input items→messages, reasoning effort, model mapping).
