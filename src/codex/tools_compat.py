@@ -331,6 +331,13 @@ def parse_codex_tools(raw_tools: List[Any]) -> CodexToolContext:
                 )
             continue
 
+            # Unknown tool types (image_generation, etc.) — strip them since Nebius
+        # only supports function tools.
+        if tool_type not in ("function", "namespace", "custom", ""):
+            if not strip_builtins:
+                ctx._tools.append(tool)
+            continue
+
         # --- Standard function tools (passthrough with Codex flat-format normalisation) ---
         # Codex CLI 0.130+ sends flat tools:
         #   {"type":"function","name":"X","description":"...","parameters":{...}}

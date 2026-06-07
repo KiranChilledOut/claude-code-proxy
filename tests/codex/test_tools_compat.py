@@ -566,3 +566,15 @@ def test_flat_function_tool_format_normalised():
     assert t["function"]["name"] == "exec_command"
     assert t["function"]["description"] == "Runs a command in a PTY"
     assert "parameters" in t["function"]
+
+
+def test_unknown_tool_type_stripped():
+    """Tools with non-function types (e.g. image_generation) must be stripped before
+    sending to Nebius, since it only supports function tools."""
+    raw = [
+        {"type": "function", "name": "exec_command", "parameters": {}},
+        {"type": "image_generation", "output_format": "png"},
+    ]
+    ctx = parse_codex_tools(raw)
+    assert len(ctx.tools) == 1
+    assert ctx.tools[0]["type"] == "function"
