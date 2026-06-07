@@ -90,6 +90,20 @@ def main():
             f"requests locally (default: {config.enable_request_optimizations})"
         )
         print("")
+        print("Codex options:")
+        print(
+            f"  CODEX_ENABLED - Enable /v1/responses endpoint (default: {config.codex_enabled})"
+        )
+        print(
+            f"  CODEX_TOOL_COMPAT - Enable Codex custom/namespace tool conversion (default: {config.codex_tool_compat})"
+        )
+        print(
+            f"  CODEX_SESSION_TTL_SECONDS - Session TTL in seconds (default: {config.codex_session_ttl_seconds})"
+        )
+        print(
+            f"  CODEX_WEBSOCKET_FALLBACK - Return 426 on WebSocket upgrade attempts (default: {config.codex_websocket_fallback})"
+        )
+        print("")
         print("Model mapping:")
         print(f"  Claude haiku models -> {config.small_model}")
         print(f"  Claude sonnet models -> {config.middle_model}")
