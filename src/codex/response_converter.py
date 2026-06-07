@@ -12,11 +12,18 @@ from src.codex.models import (
 )
 
 
-def _build_usage(usage_raw: Dict[str, Any]) -> ResponsesUsage:
+def _build_usage(usage_raw: Any) -> ResponsesUsage:
     """Map OpenAI usage fields into a ResponsesUsage model."""
+    if not isinstance(usage_raw, dict):
+        # Handle Pydantic model objects (OpenAI SDK v1/v2 sometimes returns these)
+        usage_raw = usage_raw.model_dump() if hasattr(usage_raw, "model_dump") else (
+            usage_raw.dict() if hasattr(usage_raw, "dict") else {})
+
     input_tokens_details = None
     if "prompt_tokens_details" in usage_raw:
         prompt_details = usage_raw["prompt_tokens_details"]
+        if not isinstance(prompt_details, dict):
+            prompt_details = prompt_details.model_dump() if hasattr(prompt_details, "model_dump") else {}
         input_tokens_details = InputTokensDetails(
             cached_tokens=prompt_details.get("cached_tokens", 0)
         )
@@ -24,6 +31,8 @@ def _build_usage(usage_raw: Dict[str, Any]) -> ResponsesUsage:
     output_tokens_details = None
     if "completion_tokens_details" in usage_raw:
         completion_details = usage_raw["completion_tokens_details"]
+        if not isinstance(completion_details, dict):
+            completion_details = completion_details.model_dump() if hasattr(completion_details, "model_dump") else {}
         output_tokens_details = OutputTokensDetails(
             reasoning_tokens=completion_details.get("reasoning_tokens", 0)
         )
@@ -32,8 +41,9 @@ def _build_usage(usage_raw: Dict[str, Any]) -> ResponsesUsage:
     cache_read = None
     if "prompt_tokens_details" in usage_raw:
         ptd = usage_raw["prompt_tokens_details"]
-        cache_creation = ptd.get("cache_creation_tokens", 0) or None
-        cache_read = ptd.get("cached_tokens", 0) or None
+        if isinstance(ptd, dict):
+            cache_creation = ptd.get("cache_creation_tokens", 0) or None
+            cache_read = ptd.get("cached_tokens", 0) or None
 
     return ResponsesUsage(
         input_tokens=usage_raw.get("prompt_tokens", 0),
@@ -122,7 +132,14 @@ def convert_openai_to_responses(
         A ``ResponsesResponse`` Pydantic model.
     """
     choices = openai_response.get("choices", [])
-    message = choices[0].get("message", {}) if choices else {}
+    if choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message", {})
+        else:
+            message = getattr(first, "message", None) or {}
+    else:
+        message = {}
 
     if isinstance(message, dict):
         message_dict = message
