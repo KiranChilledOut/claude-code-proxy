@@ -150,3 +150,38 @@ async def test_loop_handles_kimi_token_args(monkeypatch):
     client = _FakeClient([first, final])
     await server_tools.run_search_loop({"messages": []}, client, "r")
     assert seen["q"] == "kimi test"
+
+
+# --------------------------------------------------------------------------
+# system-prompt nudge (call search on its own turn)
+# --------------------------------------------------------------------------
+from src.conversion.request_converter import convert_claude_to_openai
+from src.core.model_manager import model_manager
+from src.conversion.server_tools import SEARCH_TOOL_SYSTEM_SUPPLEMENT
+
+
+def _req_with_websearch():
+    return ClaudeMessagesRequest(
+        model="claude-opus-4-8", max_tokens=64,
+        messages=[{"role": "user", "content": "find something"}],
+        system="You are helpful.",
+        tools=[
+            {"name": "WebSearch", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
+            {"name": "Bash", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}},
+        ],
+    )
+
+
+def test_search_nudge_injected_when_key_set(monkeypatch):
+    monkeypatch.setattr(config, "tavily_api_key", "tvly-x")
+    out = convert_claude_to_openai(_req_with_websearch(), model_manager)
+    sys_msg = out["messages"][0]
+    assert sys_msg["role"] == "system"
+    assert SEARCH_TOOL_SYSTEM_SUPPLEMENT in sys_msg["content"]
+
+
+def test_search_nudge_absent_without_key(monkeypatch):
+    monkeypatch.setattr(config, "tavily_api_key", "")
+    out = convert_claude_to_openai(_req_with_websearch(), model_manager)
+    joined = " ".join(m.get("content", "") if isinstance(m.get("content"), str) else "" for m in out["messages"])
+    assert SEARCH_TOOL_SYSTEM_SUPPLEMENT not in joined

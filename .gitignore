@@ -191,3 +191,4 @@ observability.sqlite3*
 .archon
 temporary
 .vscode/settings.json
+.mcp.json

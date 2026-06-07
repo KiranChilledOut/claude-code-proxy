@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Search-tool system nudge: when a web-search tool is offered and Tavily is
+  configured, the proxy injects a short system-prompt line telling the model to
+  call web search on its own turn (not batched with other tools), so it can be
+  executed server-side. Scoped — only added when a search tool is present.
 - Server-side web search (Tavily). When `TAVILY_API_KEY` is set, the proxy
   executes `web_search`/`WebSearch` tool calls itself in a bounded loop and
   feeds results back to the model, returning the final answer. Fixes "Did 0

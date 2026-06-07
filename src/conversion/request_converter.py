@@ -8,7 +8,11 @@ from src.conversion.computer_use import (
     convert_schema_less_tools,
     is_computer_use_tool,
 )
-from src.conversion.server_tools import SEARCH_TOOL_PARAMETERS, is_search_tool
+from src.conversion.server_tools import (
+    SEARCH_TOOL_PARAMETERS,
+    SEARCH_TOOL_SYSTEM_SUPPLEMENT,
+    is_search_tool,
+)
 from src.core.client import reasoning_effort_supported
 from src.core.config import config
 from src.core.constants import Constants
@@ -622,6 +626,19 @@ def convert_claude_to_openai(
                         "role": Constants.ROLE_SYSTEM,
                         "content": cu_system_supplement.strip(),
                     },
+                )
+
+        # If a web-search tool is offered and server-side search is configured,
+        # nudge the model to call it on its own turn — batched search tool calls
+        # can't be executed server-side (the backend turn can't be completed
+        # without results for the sibling client tools).
+        if config.tavily_api_key and any(is_search_tool(t) for t in claude_request.tools):
+            if openai_messages and openai_messages[0].get("role") == Constants.ROLE_SYSTEM:
+                openai_messages[0]["content"] += "\n\n" + SEARCH_TOOL_SYSTEM_SUPPLEMENT
+            else:
+                openai_messages.insert(
+                    0,
+                    {"role": Constants.ROLE_SYSTEM, "content": SEARCH_TOOL_SYSTEM_SUPPLEMENT},
                 )
 
         openai_tools = []

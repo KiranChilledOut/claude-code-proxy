@@ -32,6 +32,15 @@ SEARCH_TOOL_PARAMETERS = {
 }
 
 
+SEARCH_TOOL_SYSTEM_SUPPLEMENT = (
+    "Web search note: this environment executes web search server-side. When you "
+    "need to search the web, call the web search tool (web_search / WebSearch) by "
+    "ITSELF in its own turn — do not batch it together with other tool calls in the "
+    "same response. The search runs and its results are returned to you before you "
+    "continue. (Batching it with other tools prevents the search from executing.)"
+)
+
+
 def is_search_tool(tool: Any) -> bool:
     """True if a tool definition is a web-search tool (by name or server type)."""
     name = (getattr(tool, "name", "") or "").lower()
