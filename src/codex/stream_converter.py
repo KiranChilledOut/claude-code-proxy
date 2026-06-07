@@ -1,19 +1,22 @@
-"""Convert an OpenAI Chat Completions SSE stream into Codex Responses API SSE events."""
+"""Convert an OpenAI Chat Completions SSE stream into Codex Responses API SSE events.
+
+Follows the full Responses API streaming spec — every event carries a
+``response`` envelope (a dict, not a bare string) so that the official
+OpenAI Rust SDK (used by Codex CLI) can deserialize it.
+"""
 
 import json
 import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 
 @dataclass
 class CodexStreamState:
-    """Mutable state for one Codex stream conversion."""
-
     response_id: str
-    created_at: int  # epoch seconds
+    created_at: int
     seq: int = 0
     text_buf: str = ""
     func_args_buf: Dict[int, str] = field(default_factory=dict)
@@ -33,20 +36,37 @@ _RE_THINKING = re.compile(r"<thinking>|<thinking>", re.IGNORECASE)
 _RE_THINKING_CLOSE = re.compile(r"</thinking>|</thinking>", re.IGNORECASE)
 
 
-def _emit_data(payload: Dict[str, Any]) -> str:
-    """Format a single SSE data line."""
-    return f"data: {json.dumps(payload)}\n\n"
+def _response_envelope(
+    response_id: str,
+    created_at: int,
+    *,
+    model: str = "",
+    status: str = "in_progress",
+    output: Optional[List[Dict[str, Any]]] = None,
+    usage: Optional[Dict[str, int]] = None,
+) -> Dict[str, Any]:
+    """Build the response object that every event carries in the ``response`` key."""
+    env: Dict[str, Any] = {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "status": status,
+        "error": None,
+        "background": False,
+    }
+    if model:
+        env["model"] = model
+    if output is not None:
+        env["output"] = output
+    if usage is not None:
+        env["usage"] = usage
+    return env
 
 
-def _make_event(type_: str, **fields: Any) -> str:
-    """Build payload and wrap in SSE data: frame."""
-    payload: Dict[str, Any] = {"type": type_}
+def _ev(type_: str, *, seq: int, response: Dict[str, Any], **fields: Any) -> str:
+    payload: Dict[str, Any] = {"type": type_, "sequence_number": seq, "response": response}
     payload.update(fields)
-    return _emit_data(payload)
-
-
-def _make_response_id() -> str:
-    return f"resp_{uuid.uuid4().hex[:16]}"
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 async def convert_openai_sse_to_responses_sse(
@@ -54,22 +74,12 @@ async def convert_openai_sse_to_responses_sse(
     request_model: str,
     tool_ctx: Any = None,
 ) -> AsyncGenerator[str, None]:
-    """Consume an OpenAI SSE stream and yield Codex Responses SSE events.
-
-    Args:
-        openai_sse_stream: Async generator yielding raw SSE lines from OpenAI.
-        request_model: The model name requested by the Codex client.
-        tool_ctx: Optional tool-context object with ``remap_tool_calls_back()``.
-
-    Yields:
-        SSE-formatted strings (Codex Responses event format).
-    """
     state = CodexStreamState(
-        response_id=_make_response_id(),
+        response_id=f"resp_{uuid.uuid4().hex[:16]}",
         created_at=int(time.time()),
     )
-
-    reasoning_open = False   # <thinking> currently open
+    reasoning_open = False
+    msg_id = f"msg_{state.response_id}"
 
     def _remap_name(name: str) -> str:
         if tool_ctx is not None and hasattr(tool_ctx, "remap_tool_calls_back"):
@@ -78,38 +88,49 @@ async def convert_openai_sse_to_responses_sse(
                 return remapped
         return name
 
-    # --- Always emit created first ---
-    yield _make_event(
+    # 1. response.created
+    state.seq += 1
+    yield _ev(
         "response.created",
-        response=state.response_id,
-        model=request_model,
+        seq=state.seq,
+        response=_response_envelope(state.response_id, state.created_at, model=request_model),
+    )
+
+    # 2. response.in_progress
+    state.seq += 1
+    yield _ev(
+        "response.in_progress",
+        seq=state.seq,
+        response=_response_envelope(state.response_id, state.created_at, model=request_model),
+    )
+
+    # --- Emit output item for the assistant message ---
+    state.seq += 1
+    yield _ev(
+        "response.output_item.added",
+        seq=state.seq,
+        response=_response_envelope(state.response_id, state.created_at, model=request_model),
+        output_index=0,
+        item={
+            "id": msg_id,
+            "type": "message",
+            "status": "in_progress",
+            "role": "assistant",
+        },
     )
 
     async for line in openai_sse_stream:
         if not line.strip():
             continue
-
-        # Only process data: lines
         if not line.startswith("data:"):
             continue
-
         payload_str = line[len("data:"):].strip()
-
-        # Stream terminator
         if payload_str == "[DONE]":
             break
-
         try:
             chunk = json.loads(payload_str)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             continue
-
-        # --- Every valid chunk: emit in_progress ---
-        yield _make_event(
-            "response.in_progress",
-            response=state.response_id,
-            output_index=0,
-        )
 
         choices = chunk.get("choices", [])
         if choices:
@@ -117,12 +138,10 @@ async def convert_openai_sse_to_responses_sse(
             delta = choice.get("delta", {})
             finish_reason = choice.get("finish_reason")
 
-            # --- Handle text delta ---
+            # --- Text delta ---
             content = delta.get("content")
             if content is not None and content != "":
                 text = content
-
-                # Strip <thinking>…</thinking> blocks from visible text
                 while True:
                     m_open = _RE_THINKING.search(text)
                     if m_open:
@@ -133,7 +152,6 @@ async def convert_openai_sse_to_responses_sse(
                             text = before + after[m_close.end():]
                             continue
                         else:
-                            # Unclosed tag: drop from open to end, mark reasoning active
                             reasoning_open = True
                             state.reasoning_buf += after
                             text = before
@@ -152,40 +170,40 @@ async def convert_openai_sse_to_responses_sse(
 
                 if text:
                     state.text_buf += text
-                    yield _make_event(
+                    state.seq += 1
+                    yield _ev(
                         "response.output_text.delta",
+                        seq=state.seq,
+                        response=_response_envelope(state.response_id, state.created_at, model=request_model),
                         delta=text,
                         output_index=0,
                     )
 
-            # --- Handle tool call deltas ---
+            # --- Tool call deltas ---
             tool_calls = delta.get("tool_calls")
             if tool_calls and isinstance(tool_calls, list):
                 for tc in tool_calls:
                     idx = tc.get("index", 0)
-
                     func = tc.get("function", {})
                     arguments = func.get("arguments")
 
-                    # Store id / name on first appearance
                     if tc.get("id") and idx not in state.func_call_ids:
                         state.func_call_ids[idx] = tc["id"]
                     if func.get("name") and idx not in state.func_names:
                         state.func_names[idx] = _remap_name(func["name"])
 
-                    # Determine if this chunk carries a real argument delta
-                    has_real_args = (
-                        arguments is not None and arguments.strip() not in ("", "{}")
-                    )
+                    has_real_args = arguments is not None and arguments.strip() not in ("", "{}")
 
-                    if has_real_args:
-                        if not state.func_item_added.get(idx, False):
-                            # First real argument delta — emit item.added + args delta
+                    if not state.func_item_added.get(idx, False):
+                        if has_real_args or tc.get("id"):
                             state.func_item_added[idx] = True
                             call_id = state.func_call_ids.get(idx) or f"fc_{idx}"
                             func_name = state.func_names.get(idx) or "unknown"
-                            yield _make_event(
+                            state.seq += 1
+                            yield _ev(
                                 "response.output_item.added",
+                                seq=state.seq,
+                                response=_response_envelope(state.response_id, state.created_at, model=request_model),
                                 output_index=idx,
                                 item={
                                     "id": call_id,
@@ -195,20 +213,26 @@ async def convert_openai_sse_to_responses_sse(
                                     "status": "in_progress",
                                 },
                             )
-                            state.func_args_buf[idx] = arguments
-                            yield _make_event(
-                                "response.function_call_arguments.delta",
-                                output_index=idx,
-                                delta=arguments,
-                            )
-                        else:
-                            # Subsequent argument deltas
-                            state.func_args_buf[idx] = state.func_args_buf.get(idx, "") + arguments
-                            yield _make_event(
-                                "response.function_call_arguments.delta",
-                                output_index=idx,
-                                delta=arguments,
-                            )
+                            if has_real_args:
+                                state.func_args_buf[idx] = arguments
+                                state.seq += 1
+                                yield _ev(
+                                    "response.function_call_arguments.delta",
+                                    seq=state.seq,
+                                    response=_response_envelope(state.response_id, state.created_at, model=request_model),
+                                    output_index=idx,
+                                    delta=arguments,
+                                )
+                    elif has_real_args:
+                        state.func_args_buf[idx] = state.func_args_buf.get(idx, "") + arguments
+                        state.seq += 1
+                        yield _ev(
+                            "response.function_call_arguments.delta",
+                            seq=state.seq,
+                            response=_response_envelope(state.response_id, state.created_at),
+                            output_index=idx,
+                            delta=arguments,
+                        )
 
             # --- Capture usage from final chunk ---
             if finish_reason is not None:
@@ -216,20 +240,29 @@ async def convert_openai_sse_to_responses_sse(
                 if usage:
                     state.input_tokens = usage.get("prompt_tokens", 0)
                     state.output_tokens = usage.get("completion_tokens", 0)
-                    p_details = usage.get("prompt_tokens_details") or {}
-                    state.cached_tokens = p_details.get("cached_tokens", 0) or 0
-                    c_details = usage.get("completion_tokens_details") or {}
-                    state.reasoning_tokens = c_details.get("reasoning_tokens", 0) or 0
 
-    # --- Stream done: emit response.completed ---
+    # --- stream done: emit response.completed ---
     total_tokens = state.input_tokens + state.output_tokens
-    yield _make_event(
+    state.seq += 1
+    yield _ev(
         "response.completed",
-        status="completed",
-        output=[],
-        usage={
-            "input_tokens": state.input_tokens,
-            "output_tokens": state.output_tokens,
-            "total_tokens": total_tokens,
-        },
+        seq=state.seq,
+        response=_response_envelope(
+            state.response_id,
+            state.created_at,
+            status="completed",
+            output=[
+                {
+                    "type": "message",
+                    "id": msg_id,
+                    "content": [{"type": "output_text", "text": state.text_buf}],
+                    "role": "assistant",
+                }
+            ],
+            usage={
+                "input_tokens": state.input_tokens,
+                "output_tokens": state.output_tokens,
+                "total_tokens": total_tokens,
+            },
+        ),
     )
