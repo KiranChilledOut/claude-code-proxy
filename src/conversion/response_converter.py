@@ -1251,3 +1251,84 @@ async def convert_openai_streaming_to_claude(
         openai_stream, original_request, logger
     ):
         yield event
+
+
+def claude_response_to_sse(response: dict):
+    """Serialize a complete Claude response dict into Anthropic SSE.
+
+    Unlike ``optimized_response_to_sse`` (text-only), this emits text, thinking,
+    AND tool_use blocks — so a non-streamed result (e.g. the server-side search
+    loop's final response, which may contain client tool calls) streams back to
+    Claude Code without dropping tool calls.
+    """
+    content = response.get("content") or []
+    message = dict(response)
+    message["content"] = []
+    message["stop_reason"] = None
+
+    yield _sse(Constants.EVENT_MESSAGE_START, {"type": Constants.EVENT_MESSAGE_START, "message": message})
+
+    emitted = 0
+    for idx, block in enumerate(content):
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == Constants.CONTENT_TOOL_USE:
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_START, {
+                "type": Constants.EVENT_CONTENT_BLOCK_START, "index": idx,
+                "content_block": {
+                    "type": Constants.CONTENT_TOOL_USE,
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "input": {},
+                },
+            })
+            args_json = json.dumps(block.get("input") or {}, ensure_ascii=False)
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_DELTA, {
+                "type": Constants.EVENT_CONTENT_BLOCK_DELTA, "index": idx,
+                "delta": {"type": Constants.DELTA_INPUT_JSON, "partial_json": args_json},
+            })
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_STOP, {"type": Constants.EVENT_CONTENT_BLOCK_STOP, "index": idx})
+            emitted += 1
+        elif btype == "thinking":
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_START, {
+                "type": Constants.EVENT_CONTENT_BLOCK_START, "index": idx,
+                "content_block": {"type": "thinking", "thinking": ""},
+            })
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_DELTA, {
+                "type": Constants.EVENT_CONTENT_BLOCK_DELTA, "index": idx,
+                "delta": {"type": "thinking_delta", "thinking": block.get("thinking") or ""},
+            })
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_STOP, {"type": Constants.EVENT_CONTENT_BLOCK_STOP, "index": idx})
+            emitted += 1
+        else:  # text
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_START, {
+                "type": Constants.EVENT_CONTENT_BLOCK_START, "index": idx,
+                "content_block": {"type": Constants.CONTENT_TEXT, "text": ""},
+            })
+            text = block.get("text") or ""
+            if text:
+                yield _sse(Constants.EVENT_CONTENT_BLOCK_DELTA, {
+                    "type": Constants.EVENT_CONTENT_BLOCK_DELTA, "index": idx,
+                    "delta": {"type": Constants.DELTA_TEXT, "text": text},
+                })
+            yield _sse(Constants.EVENT_CONTENT_BLOCK_STOP, {"type": Constants.EVENT_CONTENT_BLOCK_STOP, "index": idx})
+            emitted += 1
+
+    if emitted == 0:
+        # Always give Claude Code at least one block.
+        yield _sse(Constants.EVENT_CONTENT_BLOCK_START, {
+            "type": Constants.EVENT_CONTENT_BLOCK_START, "index": 0,
+            "content_block": {"type": Constants.CONTENT_TEXT, "text": ""},
+        })
+        yield _sse(Constants.EVENT_CONTENT_BLOCK_STOP, {"type": Constants.EVENT_CONTENT_BLOCK_STOP, "index": 0})
+
+    yield _sse(Constants.EVENT_MESSAGE_DELTA, {
+        "type": Constants.EVENT_MESSAGE_DELTA,
+        "delta": {
+            "stop_reason": response.get("stop_reason") or Constants.STOP_END_TURN,
+            "stop_sequence": response.get("stop_sequence"),
+        },
+        "usage": response.get("usage") or {},
+    })
+    yield _sse(Constants.EVENT_MESSAGE_STOP, {"type": Constants.EVENT_MESSAGE_STOP})

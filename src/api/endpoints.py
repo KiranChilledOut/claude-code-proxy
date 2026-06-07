@@ -17,6 +17,7 @@ from src.conversion.request_converter import (
 )
 from src.conversion import server_tools
 from src.conversion.response_converter import (
+    claude_response_to_sse,
     convert_openai_streaming_to_claude_with_cancellation,
     convert_openai_to_claude_response,
 )
@@ -259,7 +260,7 @@ async def create_message(
             )
             if request.stream:
                 return StreamingResponse(
-                    optimized_response_to_sse(claude_response),
+                    claude_response_to_sse(claude_response),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",

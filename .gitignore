@@ -190,3 +190,4 @@ observability.sqlite3*
 .DS_Store
 .archon
 temporary
+.vscode/settings.json

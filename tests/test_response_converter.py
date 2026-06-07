@@ -4,6 +4,7 @@ import pytest
 
 from src.conversion.response_converter import (
     _finalize_tool_args,
+    claude_response_to_sse,
     _sanitize_tool_arguments,
     convert_openai_streaming_to_claude_with_cancellation,
     convert_openai_to_claude_response,
@@ -223,3 +224,43 @@ def test_sanitize_clean_args_unaffected():
     name, args = _sanitize_tool_arguments("WebSearch", '{"query": "x"}')
     assert name == "WebSearch"
     assert json.loads(args) == {"query": "x"}
+
+
+# --------------------------------------------------------------------------
+# claude_response_to_sse: synthetic streaming must preserve tool_use blocks
+# (regression: optimized_response_to_sse dropped them, breaking tool calls
+#  routed through the server-search loop).
+# --------------------------------------------------------------------------
+def test_claude_response_to_sse_emits_tool_use():
+    resp = {
+        "id": "msg_1", "type": "message", "role": "assistant", "model": "x",
+        "content": [
+            {"type": "text", "text": "Let me read that."},
+            {"type": "tool_use", "id": "tu_1", "name": "Read",
+             "input": {"file_path": "/x/settings.json"}},
+        ],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 5, "output_tokens": 7},
+    }
+    sse = "".join(claude_response_to_sse(resp))
+    assert '"type": "tool_use"' in sse
+    assert '"name": "Read"' in sse
+    assert '"input_json_delta"' in sse
+    assert "/x/settings.json" in sse  # the args actually made it through
+    assert '"stop_reason": "tool_use"' in sse
+    assert "event: message_stop" in sse
+
+
+def test_claude_response_to_sse_text_only():
+    resp = {"content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn", "usage": {}}
+    sse = "".join(claude_response_to_sse(resp))
+    assert '"text": "hi"' in sse
+    assert "event: message_stop" in sse
+
+
+def test_claude_response_to_sse_empty_content():
+    resp = {"content": [], "stop_reason": "end_turn", "usage": {}}
+    sse = "".join(claude_response_to_sse(resp))
+    # still emits a valid lifecycle with at least one block
+    assert "content_block_start" in sse
+    assert "event: message_stop" in sse

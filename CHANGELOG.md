@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reasoning, and stop-reason changes.
 
 ### Fixed
+- Server-search path no longer drops tool calls. The non-streamed loop result
+  was being streamed back via a text-only serializer, so on turns that merely
+  *offered* `WebSearch` the model's real tool call (Read/Edit/Agent/...) was
+  silently dropped -> "The model's tool call could not be parsed." Added a
+  tool_use/thinking-aware SSE serializer (`claude_response_to_sse`) for that path.
 - Self-heal on upstream context-length 400s: the proxy now detects when a
   backend rejects a request for exceeding its context window, sheds the oldest
   messages with the existing safe trimmer (system prompt, latest turn, and tool
