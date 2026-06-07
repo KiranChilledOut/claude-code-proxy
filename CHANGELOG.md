@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Codex proxy request converter: `src/codex/request_converter.py` handles Responses API -> OpenAI Chat Completions request translation, including model mapping, message array construction (string vs array input, instructions -> system, session_items prepended), tool call/function_call conversion, reasoning effort mapping, and generation parameter passthrough.
 - Codex proxy foundation: Pydantic models, config, model mapping
 - Server-side web search (Tavily). When `TAVILY_API_KEY` is set, the proxy
   executes `web_search`/`WebSearch` tool calls itself in a bounded loop and
