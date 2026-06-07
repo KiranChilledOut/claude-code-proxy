@@ -92,7 +92,7 @@ def _build_output_items(
                     call_id=tc.get("id") if isinstance(tc, dict) else tc.id,
                     name=func.get("name") if isinstance(func, dict) else func.name,
                     arguments=func.get("arguments") if isinstance(func, dict) else func.arguments,
-                    status="in_progress",
+                    status="completed",
                 )
             )
 

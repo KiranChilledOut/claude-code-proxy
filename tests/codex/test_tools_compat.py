@@ -223,17 +223,54 @@ def test_namespace_missing_tools():
 # ---------------------------------------------------------------------------
 
 def test_builtin_tools_stripped_when_compat_enabled():
-    """When CODEX_TOOL_COMPAT is enabled (default), builtins are stripped."""
-    raw = ["web_search", "local_shell", "computer_use"]
-    ctx = parse_codex_tools(raw)
-    assert not ctx.tools
-    assert not ctx.function_tools
+    """When CODEX_TOOL_COMPAT is enabled (default) and Tavily is off,
+    builtins are stripped."""
+    with patch("src.codex.tools_compat._config") as mock_config:
+        mock_config.codex_tool_compat = True
+        mock_config.tavily_api_key = ""
+        mock_config.server_search_enabled = True
+        raw = ["web_search", "local_shell", "computer_use"]
+        ctx = parse_codex_tools(raw)
+        assert not ctx.tools
+        assert not ctx.function_tools
+
+
+def test_web_search_promoted_when_tavily_enabled():
+    """When CODEX_TOOL_COMPAT is enabled and Tavily is configured,
+    web_search is promoted to a function tool."""
+    with patch("src.codex.tools_compat._config") as mock_config:
+        mock_config.codex_tool_compat = True
+        mock_config.tavily_api_key = "tvly-test"
+        mock_config.server_search_enabled = True
+        raw = [{"type": "web_search"}]
+        ctx = parse_codex_tools(raw)
+        assert len(ctx.tools) == 1
+        assert ctx.tools[0]["type"] == "function"
+        assert ctx.tools[0]["function"]["name"] == "web_search"
+        assert "query" in str(ctx.tools[0])
+        assert ctx.has_search_tool is True
+        assert "web_search" in ctx.function_tools
+
+
+def test_other_builtins_stripped_even_with_tavily():
+    """local_shell and computer_use are always stripped regardless of Tavily."""
+    with patch("src.codex.tools_compat._config") as mock_config:
+        mock_config.codex_tool_compat = True
+        mock_config.tavily_api_key = "tvly-test"
+        mock_config.server_search_enabled = True
+        raw = ["local_shell", {"type": "computer_use"}]
+        ctx = parse_codex_tools(raw)
+        assert not ctx.tools
+        assert not ctx.function_tools
 
 
 def test_builtin_tools_passthrough_when_compat_disabled():
-    """When CODEX_TOOL_COMPAT is disabled, builtins are passed through as-is."""
+    """When CODEX_TOOL_COMPAT is disabled and Tavily is off,
+    builtins are passed through as-is."""
     with patch("src.codex.tools_compat._config") as mock_config:
         mock_config.codex_tool_compat = False
+        mock_config.tavily_api_key = ""
+        mock_config.server_search_enabled = True
         raw = ["web_search", "local_shell", "computer_use"]
         ctx = parse_codex_tools(raw)
         assert len(ctx.tools) == 3
@@ -483,35 +520,40 @@ def test_remap_string_arg():
 # ---------------------------------------------------------------------------
 
 def test_mixed_tools():
-    raw = [
-        "exec_command",
-        {"type": "custom", "name": "apply_patch"},
-        {
-            "type": "namespace",
-            "name": "mcp__",
-            "tools": [{"name": "read_file"}],
-        },
-        "web_search",  # built-in, stripped
-        {
-            "type": "function",
-            "function": {"name": "get_weather"},
-        },
-    ]
-    ctx = parse_codex_tools(raw)
+    with patch("src.codex.tools_compat._config") as mock_config:
+        mock_config.codex_tool_compat = True
+        mock_config.tavily_api_key = ""
+        mock_config.server_search_enabled = True
+        raw = [
+            "exec_command",
+            {"type": "custom", "name": "apply_patch"},
+            {
+                "type": "namespace",
+                "name": "mcp__",
+                "tools": [{"name": "read_file"}],
+            },
+            "web_search",  # built-in, stripped when Tavily is off
+            {
+                "type": "function",
+                "function": {"name": "get_weather"},
+            },
+        ]
+        ctx = parse_codex_tools(raw)
 
-    # Should have: 1 string tool + 5 custom suffixes + 1 namespace + 1 passthrough
-    # web_search is stripped (builtin)
-    assert len(ctx.tools) == 1 + len(_CUSTOM_TOOL_SUFFIXES) + 1 + 1
-    assert ctx.has_custom_tools is True
-    assert ctx.has_namespace_tools is True
+        # Should have: 1 string tool + 5 custom suffixes + 1 namespace + 1 passthrough
+        # web_search is stripped (builtin, no Tavily)
+        assert len(ctx.tools) == 1 + len(_CUSTOM_TOOL_SUFFIXES) + 1 + 1
+        assert ctx.has_custom_tools is True
+        assert ctx.has_namespace_tools is True
+        assert ctx.has_search_tool is False
 
-    # Verify all types are present
-    names = [t["function"]["name"] for t in ctx.tools]
-    assert "exec_command" in names
-    assert "mcp__read_file" in names
-    assert "get_weather" in names
-    assert any(n.startswith("apply_patch_") for n in names)
-    assert "web_search" not in names
+        # Verify all types are present
+        names = [t["function"]["name"] for t in ctx.tools]
+        assert "exec_command" in names
+        assert "mcp__read_file" in names
+        assert "get_weather" in names
+        assert any(n.startswith("apply_patch_") for n in names)
+        assert "web_search" not in names
 
 
 # ---------------------------------------------------------------------------

@@ -28,16 +28,19 @@ from textual.widgets import (
 )
 
 from .utils import (
+    ClientChoice,
     InstallState,
     ShellType,
     append_shell_function,
     detect_shell,
     fetch_nebius_models,
     get_claude_settings_path,
+    get_codex_config_path,
     get_repo_root,
     pick_default_models,
     safe_merge_settings,
     shell_function_is_present,
+    write_codex_config,
     sync_pip_install,
     sync_venv_create,
     write_env,
@@ -136,8 +139,8 @@ class WelcomeScreen(Screen):
         with Container(classes="content_panel", id="welcome_content"):
             yield Static(
                 "\n"
-                "    ▐▛▜▌  Claude Code Proxy\n"
-                "    ────────────────────────\n",
+                "    ▐▛▜▌  Claude & Codex Proxy\n"
+                "    ───────────────────────────\n",
                 classes="banner",
             )
             yield Static("powered by Nebius Token Factory", classes="subtitle")
@@ -148,18 +151,22 @@ class WelcomeScreen(Screen):
                 "-  Check your system\n"
                 "-  Set up a Python environment\n"
                 "-  Connect to your Nebius API\n"
-                "-  Configure shell shortcuts & statusline\n",
+                "-  Configure shell shortcuts & statusline\n"
+                "-  Set up your chosen client (Claude or Codex)\n",
             )
+            yield Static("\nWhich client do you want to configure?", classes="info_label")
         with Horizontal(classes="button_bar"):
-            yield Button("Start  →", variant="success", id="start")
-            yield Button("Quit", variant="error", id="quit")
+            yield Button("Configure Claude Code", variant="success", id="claude")
+            yield Button("Configure Codex CLI", variant="primary", id="codex")
 
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "start":
+        if event.button.id == "claude":
+            self.app.state.client = ClientChoice.CLAUDE
             self.app.push_screen(PrerequisiteScreen())
-        elif event.button.id == "quit":
-            self.app.exit()
+        elif event.button.id == "codex":
+            self.app.state.client = ClientChoice.CODEX
+            self.app.push_screen(PrerequisiteScreen())
 
 
 # ─── 2. Prerequisites ──────────────────────────────────────────
@@ -690,7 +697,7 @@ class ShellScreen(Screen):
         with Container(classes="content_panel", id="shell_content"):
             yield Static("", id="detected")
             yield Checkbox(
-                "Add claude and claudius shortcuts to my shell profile",
+                "Add claude, claudius, codex, and codexius shortcuts to my shell profile",
                 value=True,
                 id="do_shell",
             )
@@ -718,7 +725,7 @@ class ShellScreen(Screen):
             self.query_one("#do_shell", Checkbox).value = False
             self.query_one("#do_shell", Checkbox).disabled = True
         else:
-            preview.update(f"[dim]Adds claude() function to {shell_rc}[/dim]")
+            preview.update(f"[dim]Adds claude() and codex() functions to {shell_rc}[/dim]")
 
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -731,12 +738,80 @@ class ShellScreen(Screen):
                     self.app.state.port,
                     get_repo_root(),
                 )
-            self.app.push_screen(StatuslineScreen())
+            if self.app.state.client == ClientChoice.CODEX:
+                self.app.push_screen(CodexConfigScreen())
+            else:
+                self.app.push_screen(StatuslineScreen())
         elif event.button.id == "back":
             self.app.pop_screen()
 
 
-# ─── 10. Statusline Config ───────────────────────────────────
+# ─── 10. Codex Config (Codex-only) ─────────────────────────────
+
+class CodexConfigScreen(Screen):
+
+    def compose(self) -> ComposeResult:
+        yield Static("[9 / 10]  Codex CLI Configuration", classes="step_header")
+        with Container(classes="content_panel", id="codex_content"):
+            yield Static(
+                "The Codex CLI configuration file will be updated with proxy routing.",
+                classes="hint_label",
+            )
+            yield Static("", id="codex_config_path")
+            yield Static("", id="codex_preview")
+            yield Static("", id="codex_status")
+            yield Checkbox(
+                "Write proxy settings to Codex config (~/.codex/config.toml or .json)",
+                value=True,
+                id="do_codex_config",
+            )
+        with Horizontal(classes="button_bar"):
+            yield Button("←  Back", id="back")
+            yield Button("Continue  →", variant="success", id="next")
+
+    def on_mount(self) -> None:
+        s = self.app.state
+        path_label = self.query_one("#codex_config_path", Static)
+        preview = self.query_one("#codex_preview", Static)
+
+        codex_path = get_codex_config_path()
+        if codex_path and codex_path.exists():
+            path_label.update(f"Found: [dim]{codex_path}[/]")
+            model = s.big_model
+            if model:
+                provider_model = f"nebius/{model}" if not model.startswith("nebius/") else model
+                preview.update(
+                    f"Will set:\n"
+                    f'  model = "{provider_model}"\n'
+                    f'  base_url = "http://127.0.0.1:{s.port}/v1"\n'
+                    f'  env_key = "OPENAI_API_KEY"'
+                )
+        else:
+            path_label.update("[dim]No existing Codex config — will create ~/.codex/config.toml[/]")
+
+    @on(Button.Pressed)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "next":
+            do_it = self.query_one("#do_codex_config", Checkbox).value
+            status = self.query_one("#codex_status", Static)
+            if do_it:
+                result = write_codex_config(
+                    self.app.state.big_model,
+                    self.app.state.port,
+                    get_repo_root(),
+                )
+                if result.get("action") == "written":
+                    status.update(f"[green]✔  {result.get('message', 'Done')}[/]")
+                else:
+                    status.update(f"[red]✘  {result.get('message', 'Unknown error')}[/]")
+            else:
+                status.update("[dim]Skipped Codex config — configure manually later.[/]")
+            self.app.push_screen(DoneScreen())
+        elif event.button.id == "back":
+            self.app.pop_screen()
+
+
+# ─── 10. Statusline Config (Claude-only) ─────────────────────
 
 class StatuslineScreen(Screen):
 
@@ -849,15 +924,30 @@ class DoneScreen(Screen):
         with Container(classes="content_panel", id="done_content"):
             yield Static("Your proxy is ready!", classes="success_label")
             s = self.app.state
-            yield Markdown(f"""**Start the proxy:**
-                ```
-                .venv/bin/python start_proxy.py
-                ```
-                **Use it:**
-                ```
-                claude --proxy
-                ```
-                **Dashboard:**  http://localhost:{s.port}/dashboard
+            if s.client == ClientChoice.CODEX:
+                yield Markdown(f"""**Start the proxy:**
+                    ```
+                    .venv/bin/python start_proxy.py
+                    ```
+                    **Use it:**
+                    ```
+                    codex --proxy
+                    ```
+                    *(or open the Codex Desktop app — it'll use the proxy automatically)*
+
+                    **Dashboard:**  http://localhost:{s.port}/dashboard
+
+[dim]Hit Finish to close this wizard.[/dim]""")
+            else:
+                yield Markdown(f"""**Start the proxy:**
+                    ```
+                    .venv/bin/python start_proxy.py
+                    ```
+                    **Use it:**
+                    ```
+                    claude --proxy
+                    ```
+                    **Dashboard:**  http://localhost:{s.port}/dashboard
 
 [dim]Hit Finish to close this wizard.[/dim]""")
         with Horizontal(classes="button_bar"):

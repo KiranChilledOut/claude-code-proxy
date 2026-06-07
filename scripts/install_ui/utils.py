@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import pathlib
 import platform
 import shutil
@@ -17,8 +18,14 @@ class ShellType(Enum):
     UNKNOWN = "unknown"
 
 
+class ClientChoice(Enum):
+    CLAUDE = "claude"
+    CODEX = "codex"
+
+
 @dataclass
 class InstallState:
+    client: ClientChoice = ClientChoice.CLAUDE
     python_version: str = ""
     has_pip: bool = False
     has_curl: bool = False
@@ -45,6 +52,25 @@ def get_repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[2]
 
 
+def _get_pwsh_profile() -> str:
+    """Return pwsh profile path if pwsh is available, else empty string."""
+    if not shutil.which("pwsh"):
+        return ""
+    try:
+        result = subprocess.run(
+            ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PROFILE"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = [ln.strip() for ln in result.stdout.strip().splitlines() if ln.strip()]
+        if lines:
+            return lines[-1]
+    except Exception:
+        pass
+    return ""
+
+
 def detect_shell() -> tuple[ShellType, str]:
     parent = os.environ.get("PPID", "0")
     try:
@@ -58,49 +84,36 @@ def detect_shell() -> tuple[ShellType, str]:
     except Exception:
         parent_name = ""
 
+    # 1. If parent IS bash/zsh → use that (TUI was launched from that shell)
     if parent_name in {"bash"}:
         return ShellType.BASH, os.path.expanduser("~/.bashrc")
     if parent_name in {"zsh"}:
         return ShellType.ZSH, os.path.expanduser("~/.zshrc")
+    if parent_name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}:
+        pwsh_profile = _get_pwsh_profile()
+        if pwsh_profile:
+            return ShellType.PWSH, pwsh_profile
 
-    if shutil.which("pwsh"):
-        try:
-            result = subprocess.run(
-                ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PROFILE"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            profile = result.stdout.strip().splitlines()[-1].strip()
-            if profile:
-                if parent_name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}:
-                    return ShellType.PWSH, profile
-        except Exception:
-            pass
+    # 2. Fall back: if pwsh is installed AND has a real profile, prefer it
+    #    (many macOS users run TUI from zsh but primarily use pwsh)
+    pwsh_profile = _get_pwsh_profile()
+    if pwsh_profile:
+        return ShellType.PWSH, pwsh_profile
 
+    # 3. Fall back to user's login shell
     user_shell = os.environ.get("SHELL", "/bin/bash")
     if "zsh" in user_shell:
         return ShellType.ZSH, os.path.expanduser("~/.zshrc")
     if "bash" in user_shell:
         return ShellType.BASH, os.path.expanduser("~/.bashrc")
 
+    # 4. Last resort — any existing RC file
     if os.path.isfile(os.path.expanduser("~/.zshrc")):
         return ShellType.ZSH, os.path.expanduser("~/.zshrc")
     if os.path.isfile(os.path.expanduser("~/.bashrc")):
         return ShellType.BASH, os.path.expanduser("~/.bashrc")
-    if shutil.which("pwsh"):
-        try:
-            result = subprocess.run(
-                ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PROFILE"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            profile = result.stdout.strip().splitlines()[-1].strip()
-            if profile:
-                return ShellType.PWSH, profile
-        except Exception:
-            pass
+    if pwsh_profile:
+        return ShellType.PWSH, pwsh_profile
 
     return ShellType.UNKNOWN, ""
 
@@ -333,13 +346,25 @@ def pick_default_models(available: list[str]) -> dict[str, str]:
 
 
 def shell_function_is_present(shell_type: ShellType, rc_path: str) -> bool:
-    """Check if the claude shell function already exists in the profile."""
+    """Check if BOTH claude and codex shell functions already exist in the profile.
+
+    Returns True only if all four shortcuts are found (claude + claudius + codex + codexius),
+    so that adding codex to an old claude-only install still proceeds.
+    """
     if not rc_path or not os.path.isfile(rc_path):
         return False
     content = pathlib.Path(rc_path).read_text(encoding="utf-8")
     if shell_type == ShellType.PWSH:
-        return "function claude" in content or "function global:claude" in content
-    return "claude() {" in content
+        has_claude = "function claude" in content or "function global:claude" in content
+        has_claudius = "function claudius" in content or "function global:claudius" in content
+        has_codex = "function codex" in content or "function global:codex" in content
+        has_codexius = "function codexius" in content or "function global:codexius" in content
+        return has_claude and has_claudius and has_codex and has_codexius
+    has_claude = "claude() {" in content
+    has_claudius = "alias claudius=" in content
+    has_codex = "codex() {" in content
+    has_codexius = "alias codexius=" in content
+    return has_claude and has_claudius and has_codex and has_codexius
 
 
 def append_shell_function(
@@ -405,6 +430,28 @@ claude() {{
     fi
 }}
 alias claudius='claude --proxy'
+
+# Codex Shell Function — enables codex, codex --proxy, and codexius
+codex() {{
+    local repo_root="{repo_root}"
+    if [[ "$1" == "--proxy" ]]; then
+        local api_key="${{OPENAI_API_KEY:-}}"
+        if [[ -z "$api_key" && -f "$repo_root/.env" ]]; then
+            api_key=$(grep -E '^OPENAI_API_KEY=' "$repo_root/.env" | head -1 | cut -d= -f2- | tr -d '" \t' 2>/dev/null || true)
+        fi
+        if [[ -z "$api_key" ]]; then
+            printf "\\033[38;5;197m▐▛▜▌ Error\\033[0m  \\033[38;5;244m→ OPENAI_API_KEY not set (export or add to $repo_root/.env)\\033[0m\\n" >&2
+            return 1
+        fi
+        export OPENAI_API_KEY="$api_key"
+        printf "\\033[38;5;129m▐▛▜▌ Codex via Proxy\\033[0m  \\033[38;5;244m→ Nebius backend\\033[0m\\n"
+        command codex "${{@:2}}"
+    else
+        printf "\\033[38;5;46m▐▛▜▌ Codex Direct\\033[0m  \\033[38;5;244m→ standard auth\\033[0m\\n"
+        command codex "$@"
+    fi
+}}
+alias codexius='codex --proxy'
 """
     with open(rc_path, "a", encoding="utf-8") as f:
         f.write(func)
@@ -467,6 +514,145 @@ function claudius {{
     param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $ClaudeArgs)
     claude --proxy @ClaudeArgs
 }}
+
+# Codex Shell Function - enables codex, codex --proxy, and codexius
+function codex {{
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $CodexArgs)
+    $repoRoot = "{repo_root}"
+    $codexCommand = (Get-Command codex -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    if ($CodexArgs.Count -gt 0 -and $CodexArgs[0] -eq "--proxy") {{
+        $apiKey = $env:OPENAI_API_KEY
+        if (-not $apiKey -and (Test-Path "$repoRoot/.env")) {{
+            $line = Select-String -Path "$repoRoot/.env" -Pattern "^OPENAI_API_KEY=" | Select-Object -First 1
+            if ($line) {{ $apiKey = ($line.Line -replace '^OPENAI_API_KEY=', '').Trim('"', ' ', "`t") }}
+        }}
+        if (-not $apiKey) {{
+            Write-Host "`e[38;5;197m▐▛▜▌ Error`e[0m  `e[38;5;244m-> OPENAI_API_KEY not set (set env var or add to $repoRoot/.env)`e[0m" -ForegroundColor Red
+            return
+        }}
+        $env:OPENAI_API_KEY = $apiKey
+        Write-Host "`e[38;5;129m▐▛▜▌ Codex via Proxy`e[0m  `e[38;5;244m-> Nebius backend`e[0m"
+        $remainingArgs = [string[]] @()
+        if ($CodexArgs.Count -gt 1) {{
+            $remainingArgs = [string[]] $CodexArgs[1..($CodexArgs.Count - 1)]
+        }}
+        & $codexCommand @remainingArgs
+    }} else {{
+        Write-Host "`e[38;5;46m▐▛▜▌ Codex Direct`e[0m  `e[38;5;244m-> standard auth`e[0m"
+        & $codexCommand @CodexArgs
+    }}
+}}
+function codexius {{
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $CodexArgs)
+    codex --proxy @CodexArgs
+}}
 """
     with open(rc_path, "a", encoding="utf-8") as f:
         f.write(func)
+
+
+# ── Codex Config ──
+
+def get_codex_config_path() -> pathlib.Path | None:
+    """Return the existing Codex config file (.toml preferred, falls back to .json)."""
+    codex_dir = pathlib.Path.home() / ".codex"
+    toml_path = codex_dir / "config.toml"
+    json_path = codex_dir / "config.json"
+    if toml_path.exists():
+        return toml_path
+    if json_path.exists():
+        return json_path
+    return toml_path  # Prefer .toml for new files
+
+
+def _normalize_model_for_codex(model: str) -> str:
+    """Codex expects nebius/<model> when using a custom provider."""
+    model = model.strip()
+    if model.startswith("nebius/"):
+        return model
+    return f"nebius/{model}"
+
+
+def write_codex_config(
+    big_model: str,
+    proxy_port: int,
+    repo_root: pathlib.Path,
+) -> dict:
+    """Write/update ~/.codex/config.toml (or .json) with proxy routing.
+
+    Returns a dict with keys: action, message, path.
+    """
+    config_path = get_codex_config_path()
+    if config_path is None:
+        return {"action": "error", "message": "Could not locate Codex config directory", "path": ""}
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Resolve actual env value from .env
+    env_key = "OPENAI_API_KEY"
+    env_value = ""
+    env_file = repo_root / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith(f"{env_key}="):
+                env_value = line.split("=", 1)[1].strip('"\'')
+                break
+
+    model = _normalize_model_for_codex(big_model)
+    base_url = f"http://127.0.0.1:{proxy_port}/v1"
+
+    if config_path.suffix == ".json":
+        data: dict = {}
+        if config_path.exists():
+            try:
+                data = json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data["model"] = model
+        data["model_provider"] = "nebius"
+        providers = data.setdefault("model_providers", {})
+        providers["nebius"] = {
+            "name": "Nebius Proxy",
+            "base_url": base_url,
+            "env_key": env_key,
+            "wire_api": "responses",
+        }
+        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return {"action": "written", "message": f"Updated {config_path}", "path": str(config_path)}
+
+    # TOML path — string-manipulation (no extra deps needed)
+    raw = ""
+    if config_path.exists():
+        raw = config_path.read_text(encoding="utf-8")
+
+    # Helper to replace or append a top-level key
+    def _set_kv(key: str, value: str) -> None:
+        nonlocal raw
+        pattern = rf"^{re.escape(key)}\s*=.*$"
+        replacement = f'{key} = "{value}"'
+        if re.search(pattern, raw, re.MULTILINE):
+            raw = re.sub(pattern, replacement, raw, flags=re.MULTILINE)
+        else:
+            raw = raw.rstrip("\n") + f"\n{replacement}\n"
+
+    _set_kv("model", model)
+    _set_kv("model_provider", "nebius")
+
+    # Replace or insert [model_providers.nebius] block
+    section = (
+        "[model_providers.nebius]\n"
+        f'    name = "Nebius Proxy"\n'
+        f'    base_url = "{base_url}"\n'
+        f'    env_key = "{env_key}"\n'
+        f'    wire_api = "responses"\n'
+    )
+    block_re = r"\[model_providers\.nebius\].*?(?=\n\[|$)"
+    block_match = re.search(block_re, raw, re.DOTALL)
+    if block_match:
+        raw = raw[:block_match.start()] + section + raw[block_match.end():]
+    else:
+        raw = raw.rstrip("\n") + "\n" + section
+
+    config_path.write_text(raw.rstrip("\n") + "\n", encoding="utf-8")
+    return {"action": "written", "message": f"Updated {config_path}", "path": str(config_path)}

@@ -1,13 +1,10 @@
-# Claude Shell Function Reference
+# Shell Function Reference
 
 The TUI installer (`./install.sh`) can automatically append the most recent version of these functions to your shell profile (`~/.zshrc`, `~/.bashrc`, or PowerShell `$PROFILE`).
 
-What the installed function does:
-- `claude` — direct subscription login (no proxy)
-- `claude --proxy` — routes through the local Nebius proxy via a per-session forwarder
-- `claudius` — alias for `claude --proxy`
+---
 
-## Usage
+## Claude Code
 
 | Command | Description |
 |---------|-------------|
@@ -16,7 +13,7 @@ What the installed function does:
 | `claude --proxy <dir>` | Proxy mode starting in a specific directory |
 | `claudius` | Alias for `claude --proxy` |
 
-## Session Forwarder
+### Session Forwarder
 
 The installed bash/zsh function uses `scripts/session_forwarder.py` to spin up a temporary forwarder on a random free port for each proxy session. This gives the statusline independent per-session metrics. When Claude Code exits, the forwarder is cleaned up automatically.
 
@@ -24,10 +21,31 @@ The PowerShell function uses `Start-Job` for equivalent behaviour.
 
 Forwarder output (including network errors) is written to `logs/session-forwarder.log` so it does not appear in the Claude Code TUI.
 
-## Visual Feedback
+### Visual Feedback
 
 - **Green** (`▐▛▜▌ Claude Direct`) = Subscription login mode
 - **Purple** (`▐▛▜▌ Claude via Proxy`) = Proxy mode via Nebius
+
+---
+
+## Codex CLI
+
+| Command | Description |
+|---------|-------------|
+| `codex` | Direct Codex CLI (standard OpenAI auth) |
+| `codex --proxy` | Proxy mode via Nebius (sets OPENAI_API_KEY from `.env`) |
+| `codexius` | Alias for `codex --proxy` |
+
+### Environment Variables
+
+The `codex --proxy` function reads your `OPENAI_API_KEY` from the environment or from `.env` in the proxy repo, then exports it before launching Codex. No additional manual steps are needed.
+
+### Visual Feedback
+
+- **Green** (`▐▛▜▌ Codex Direct`) = Standard OpenAI auth
+- **Purple** (`▐▛▜▌ Codex via Proxy`) = Proxy mode via Nebius
+
+---
 
 ## Troubleshooting
 

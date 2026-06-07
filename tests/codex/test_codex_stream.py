@@ -11,8 +11,9 @@ import pytest
 
 from src.codex.stream_converter import (
     CodexStreamState,
+    codex_response_to_sse,
     convert_openai_sse_to_responses_sse,
-    _response_envelope,
+    _env,
     _ev,
 )
 
@@ -109,11 +110,21 @@ async def test_tool_call_stream():
     assert len(tool_added) == 1
     assert tool_added[0]["item"]["name"] == "exec_command"
     assert tool_added[0]["item"]["id"] == "call_abc"
+    assert tool_added[0]["output_index"] == 1
 
     assert "response.function_call_arguments.delta" in types
     arg_deltas = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.function_call_arguments.delta"]
     assert len(arg_deltas) == 1
     assert arg_deltas[0]["delta"] == '{"cmd": "ls"}'
+    assert arg_deltas[0]["output_index"] == 1
+
+    completed = _parse_event(events[-1])
+    assert completed["type"] == "response.completed"
+    output = completed["response"]["output"]
+    assert output[0]["type"] == "message"
+    assert output[1]["type"] == "function_call"
+    assert output[1]["name"] == "exec_command"
+    assert output[1]["arguments"] == '{"cmd": "ls"}'
 
 
 # --------------------------------------------------------------------------
@@ -153,6 +164,7 @@ async def test_multiple_tool_calls():
     assert len(tool_added) == 2
     assert tool_added[0]["item"]["name"] == "tool_a"
     assert tool_added[1]["item"]["name"] == "tool_b"
+    assert [a["output_index"] for a in tool_added] == [1, 2]
 
     assert types.count("response.function_call_arguments.delta") == 2
 
@@ -322,6 +334,8 @@ async def test_tool_item_added_once_with_real_args():
     added = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.output_item.added"]
     # 1 message item + 1 tool item = 2 total
     assert len(added) == 2  # message item (index 0) + tool item (index 1)
+    tool_added = [a for a in added if a["item"].get("type") == "function_call"]
+    assert tool_added[0]["output_index"] == 1
 
 
 # --------------------------------------------------------------------------
@@ -339,6 +353,20 @@ async def test_reasoning_tokens_stripped():
     concat = "".join(texts)
     assert "visible end" in concat
     assert "<thinking>" not in concat
+
+
+@pytest.mark.asyncio
+async def test_provider_reasoning_field_not_visible_text():
+    """Nebius/Kimi reasoning deltas must not be emitted as output_text."""
+    stream = mock_openai_sse(
+        {"choices": [{"delta": {"reasoning": "hidden scratchpad"}, "finish_reason": None}]},
+        {"choices": [{"delta": {"content": "visible answer"}, "finish_reason": "stop"}]},
+    )
+    events = await _collect(convert_openai_sse_to_responses_sse(stream, "gpt-4"))
+    texts = [_parse_event(ev)["delta"] for ev in events if _parse_event(ev)["type"] == "response.output_text.delta"]
+    concat = "".join(texts)
+    assert concat == "visible answer"
+    assert "hidden scratchpad" not in concat
 
 
 # --------------------------------------------------------------------------
@@ -376,9 +404,7 @@ async def test_codex_stream_state_defaults():
     assert s.text_buf == ""
     assert s.input_tokens == 0
     assert s.output_tokens == 0
-    assert s.cached_tokens == 0
-    assert s.reasoning_tokens == 0
-    assert s.first_chunk is True
+    assert s.reasoning_active is False
 
 
 # --------------------------------------------------------------------------
@@ -418,3 +444,157 @@ async def test_tool_name_remapped_via_tool_ctx():
     added = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.output_item.added"]
     tool_added = [a for a in added if a["item"].get("type") == "function_call"]
     assert tool_added[0]["item"]["name"] == "original_fn"
+
+
+# --------------------------------------------------------------------------
+# 13. Tool call completion events emitted
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tool_call_completion_events():
+    """function_call_arguments.done and output_item.done for tools are emitted."""
+    stream = mock_openai_sse(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_abc",
+                                "function": {"name": "exec_command", "arguments": "{\"cmd\": \"ls\"}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        },
+    )
+    events = await _collect(convert_openai_sse_to_responses_sse(stream, "gpt-4"))
+    types = [_parse_event(ev)["type"] for ev in events]
+
+    assert "response.function_call_arguments.done" in types
+    assert "response.output_item.done" in types
+
+    # function_call_arguments.done should carry the full arguments
+    done_events = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.function_call_arguments.done"]
+    assert len(done_events) == 1
+    assert done_events[0]["arguments"] == '{"cmd": "ls"}'
+    assert done_events[0]["item_id"] == "call_abc"
+
+    # output_item.done for the function_call should have status "completed"
+    item_dones = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.output_item.done"]
+    # One for message, one for function_call
+    func_item_done = [d for d in item_dones if d.get("item", {}).get("type") == "function_call"]
+    assert len(func_item_done) == 1
+    assert func_item_done[0]["item"]["status"] == "completed"
+    assert func_item_done[0]["item"]["arguments"] == '{"cmd": "ls"}'
+
+
+# --------------------------------------------------------------------------
+# 14. Accumulator populated for session saving in streaming
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_accumulator_populated():
+    """The accumulator dict is populated with response_id, text, and tool_calls."""
+    acc = {}
+    stream = mock_openai_sse(
+        {"choices": [{"delta": {"content": "Hello"}, "finish_reason": None}]},
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "fn", "arguments": "{\"x\": 1}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+        },
+    )
+    events = await _collect(convert_openai_sse_to_responses_sse(stream, "gpt-4", accumulator=acc))
+    assert "response_id" in acc
+    assert acc["text_buf"] == "Hello"
+    assert len(acc["tool_calls"]) == 1
+    assert acc["tool_calls"][0]["name"] == "fn"
+    assert acc["tool_calls"][0]["arguments"] == '{"x": 1}'
+
+
+# --------------------------------------------------------------------------
+# 15. codex_response_to_sse: synthetic SSE from a complete response
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_codex_response_to_sse_text_only():
+    """A text-only response produces a valid SSE event sequence."""
+    from src.codex.models import ResponsesItem, ResponsesResponse, ResponsesUsage
+
+    response = ResponsesResponse(
+        id="resp_abc123",
+        model="gpt-4",
+        output=[ResponsesItem(type="message", role="assistant", content="Hello, world!")],
+        status="completed",
+        usage=ResponsesUsage(input_tokens=10, output_tokens=2, total_tokens=12),
+    )
+    events = await _collect(codex_response_to_sse(response, "gpt-4"))
+    types = [_parse_event(ev)["type"] for ev in events]
+
+    assert "response.created" in types
+    assert "response.in_progress" in types
+    assert "response.completed" in types
+
+    # Check output_text.delta carries the content
+    deltas = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.output_text.delta"]
+    assert len(deltas) == 1
+    assert deltas[0]["delta"] == "Hello, world!"
+
+    # Check final event has usage
+    completed = _parse_event(events[-1])
+    assert completed["response"]["status"] == "completed"
+    assert completed["response"]["usage"]["total_tokens"] == 12
+    assert completed["response"]["usage"]["input_tokens"] == 10
+    assert completed["response"]["usage"]["output_tokens"] == 2
+
+
+@pytest.mark.asyncio
+async def test_codex_response_to_sse_with_function_call():
+    """A response containing function_call items emits tool call events."""
+    from src.codex.models import ResponsesItem, ResponsesResponse, ResponsesUsage
+
+    response = ResponsesResponse(
+        id="resp_fc001",
+        model="gpt-4",
+        output=[
+            ResponsesItem(type="message", role="assistant", content="Let me search."),
+            ResponsesItem(type="function_call", call_id="call_1", name="web_search", arguments='{"query": "python"}'),
+        ],
+        status="completed",
+        usage=ResponsesUsage(input_tokens=5, output_tokens=3, total_tokens=8),
+    )
+    events = await _collect(codex_response_to_sse(response, "gpt-4"))
+    types = [_parse_event(ev)["type"] for ev in events]
+
+    assert "response.output_text.delta" in types
+    assert "response.function_call_arguments.delta" in types
+    assert "response.function_call_arguments.done" in types
+
+    # Check the function call arguments
+    arg_deltas = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.function_call_arguments.delta"]
+    assert len(arg_deltas) == 1
+    assert arg_deltas[0]["delta"] == '{"query": "python"}'
+
+    # Check completed event contains both output items
+    completed = _parse_event(events[-1])
+    assert completed["response"]["status"] == "completed"
+    assert len(completed["response"]["output"]) == 2
+    assert completed["response"]["output"][1]["type"] == "function_call"
+    assert completed["response"]["output"][1]["name"] == "web_search"
+    assert completed["response"]["output"][1]["status"] == "completed"

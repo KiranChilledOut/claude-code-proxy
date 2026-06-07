@@ -28,11 +28,18 @@ class ModelManager:
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict):
-                        if block.get("type") in ("image", "image_url") or "image_url" in block:
+                        if (
+                            block.get("type") in ("image", "input_image", "image_url")
+                            or "image_url" in block
+                        ):
                             return True
                     else:
                         # Check if it's a ClaudeContentBlockImage object
-                        if hasattr(block, "type") and block.type in ("image", "image_url"):
+                        if hasattr(block, "type") and block.type in (
+                            "image",
+                            "input_image",
+                            "image_url",
+                        ):
                             return True
         return False
 
@@ -73,7 +80,11 @@ class ModelManager:
         if "mini" in lower:
             return self.config.small_model
         # "gpt-4", "gpt-5", "o1", etc. all map to big model
-        if codex_model.startswith("gpt-") or codex_model.startswith("o1-") or codex_model.startswith("o3-"):
+        if (
+            codex_model.startswith("gpt-")
+            or codex_model.startswith("o1-")
+            or codex_model.startswith("o3-")
+        ):
             return self.config.big_model
         # Default to big model for unknown models
         return self.config.big_model

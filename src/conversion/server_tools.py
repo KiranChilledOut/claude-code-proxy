@@ -33,11 +33,12 @@ SEARCH_TOOL_PARAMETERS = {
 
 
 SEARCH_TOOL_SYSTEM_SUPPLEMENT = (
-    "Web search note: this environment executes web search server-side. When you "
-    "need to search the web, call the web search tool (web_search / WebSearch) by "
-    "ITSELF in its own turn — do not batch it together with other tool calls in the "
-    "same response. The search runs and its results are returned to you before you "
-    "continue. (Batching it with other tools prevents the search from executing.)"
+    "Web search note: for the user's current question, if it requires current "
+    "information (events after your training cutoff or real-time data), call the "
+    "web search tool (web_search / WebSearch) by ITSELF in its own turn — do not "
+    "batch it together with other tool calls in the same response. The proxy "
+    "executes the search and returns results before you continue. (Batching with "
+    "other tools prevents execution.)"
 )
 
 
@@ -115,6 +116,9 @@ async def run_search_loop(openai_request: Dict[str, Any], openai_client, request
 
     req = dict(openai_request)
     req["stream"] = False
+    # `stream_options` is only valid for streaming requests; strip it to avoid
+    # 400 Bad Request from backends that enforce structural validity.
+    req.pop("stream_options", None)
     messages = list(req.get("messages", []))
     response: Dict[str, Any] = {}
 

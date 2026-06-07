@@ -11,7 +11,7 @@ from scripts.install_ui.utils import InstallState
 class InstallerApp(App[None]):
     """The full-screen TUI wizard."""
 
-    TITLE = "Claude Code Proxy"
+    TITLE = "Claude & Codex Proxy"
     SUB_TITLE = "Setup Wizard"
     ENABLE_COMMAND_PALETTE = False
 

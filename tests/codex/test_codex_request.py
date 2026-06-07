@@ -38,14 +38,45 @@ def test_convert_content_text_blocks():
     assert _convert_content_blocks(blocks) == "Hello world"
 
 
-def test_convert_content_skips_images():
-    """Image blocks are omitted — only text is kept."""
+def test_convert_content_responses_text_blocks():
+    """Codex Responses messages use input_text/output_text block types."""
+    blocks = [
+        {"type": "input_text", "text": "Hello "},
+        {"type": "output_text", "text": "world"},
+    ]
+    assert _convert_content_blocks(blocks) == "Hello world"
+
+
+def test_convert_content_converts_images():
+    """Image blocks are normalized to OpenAI Chat Completions image_url parts."""
     blocks = [
         {"type": "text", "text": "Look: "},
-        {"type": "image", "url": "http://example.com/img.png"},
+        {"type": "input_image", "image_url": "http://example.com/img.png", "detail": "high"},
         {"type": "text", "text": "Done"},
     ]
-    assert _convert_content_blocks(blocks) == "Look: Done"
+    assert _convert_content_blocks(blocks) == [
+        {"type": "text", "text": "Look: "},
+        {
+            "type": "image_url",
+            "image_url": {"url": "http://example.com/img.png", "detail": "high"},
+        },
+        {"type": "text", "text": "Done"},
+    ]
+
+
+def test_convert_content_converts_base64_image_blocks():
+    """Claude-style base64 image blocks are also normalized for Codex history."""
+    blocks = [
+        {"type": "text", "text": "Look"},
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "abc123"},
+        },
+    ]
+    assert _convert_content_blocks(blocks) == [
+        {"type": "text", "text": "Look"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}},
+    ]
 
 
 def test_convert_content_none():
@@ -70,9 +101,28 @@ def test_item_assistant_message():
     assert msg == {"role": "assistant", "content": "Sure"}
 
 
-def test_item_message_no_role_is_dropped():
-    """A message without a known role cannot be mapped."""
+def test_item_system_message_maps_to_system():
+    """system role messages are preserved as OpenAI Chat system messages."""
     item = ResponsesItem(type="message", role="system", content="stuff")
+    assert _convert_item_to_message(item) == {"role": "system", "content": "stuff"}
+
+
+def test_item_developer_message_maps_to_system():
+    """Codex developer messages carry runtime instructions; do not drop them."""
+    item = ResponsesItem(
+        type="message",
+        role="developer",
+        content=[{"type": "input_text", "text": "Follow sandbox rules"}],
+    )
+    assert _convert_item_to_message(item) == {
+        "role": "system",
+        "content": "Follow sandbox rules",
+    }
+
+
+def test_item_unknown_message_role_is_dropped():
+    """A message without a known role cannot be mapped."""
+    item = ResponsesItem(type="message", role="invalid", content="stuff")
     assert _convert_item_to_message(item) is None
 
 
@@ -112,6 +162,35 @@ def test_item_function_call_output():
         "role": "tool",
         "content": "42",
         "tool_call_id": "call_123",
+    }
+
+
+def test_item_function_call_output_with_image():
+    """view_image-style tool output is converted instead of forwarded as input_image."""
+    item = ResponsesItem(
+        type="function_call_output",
+        call_id="call_img",
+        output=[
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,abc123",
+                "detail": "high",
+            }
+        ],
+    )
+    msg = _convert_item_to_message(item)
+    assert msg == {
+        "role": "tool",
+        "content": [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,abc123",
+                    "detail": "high",
+                },
+            }
+        ],
+        "tool_call_id": "call_img",
     }
 
 
@@ -206,6 +285,29 @@ def test_array_input_assistant_message():
     assert result["messages"] == [{"role": "assistant", "content": "Sure thing"}]
 
 
+def test_array_input_codex_developer_and_user_input_text():
+    """Real Codex CLI requests use developer messages and input_text blocks."""
+    request = _make_request(
+        input=[
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": "Use the repo rules."}],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "What is today's date?"}],
+            },
+        ],
+    )
+    result = convert_responses_to_openai_chat(request)
+    assert result["messages"] == [
+        {"role": "system", "content": "Use the repo rules."},
+        {"role": "user", "content": "What is today's date?"},
+    ]
+
+
 def test_array_input_function_call():
     """(5) Array input with function_call → assistant tool_calls message."""
     request = _make_request(
@@ -275,6 +377,7 @@ def test_session_items_prepended():
 
 def test_model_mapping_with_model_manager():
     """(8) When a model manager is supplied its map_codex_model is called."""
+
     class FakeManager:
         def map_codex_model(self, name):
             return f"mapped:{name}"
@@ -282,6 +385,55 @@ def test_model_mapping_with_model_manager():
     request = _make_request(model="gpt-4")
     result = convert_responses_to_openai_chat(request, model_manager=FakeManager())
     assert result["model"] == "mapped:gpt-4"
+
+
+def test_image_request_routes_to_vision_model_and_disables_tools():
+    """Codex image requests follow the same vision routing policy as Claude requests."""
+
+    class FakeManager:
+        def __init__(self):
+            self.config = type("Cfg", (), {"vision_model": "vision-model"})()
+
+        def map_codex_model(self, name):
+            return "text-model"
+
+        def contains_image_content(self, messages, latest_user_only=False):
+            for message in messages:
+                content = message.get("content")
+                if isinstance(content, list):
+                    if any(part.get("type") == "image_url" for part in content):
+                        return True
+            return False
+
+    request = _make_request(
+        input=[
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "what is this?"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc123"},
+                ],
+            }
+        ],
+        tools=[{"type": "function", "function": {"name": "noop", "parameters": {}}}],
+        tool_choice="auto",
+    )
+
+    result = convert_responses_to_openai_chat(request, model_manager=FakeManager())
+
+    assert result["model"] == "vision-model"
+    assert "tools" not in result
+    assert result["tool_choice"] == "none"
+    assert result["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}},
+            ],
+        }
+    ]
 
 
 def test_model_mapping_no_manager():
@@ -403,3 +555,33 @@ def test_session_items_as_objects():
         {"role": "assistant", "content": "Answer"},
         {"role": "user", "content": "Follow-up"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Search tool system supplement injection
+# ---------------------------------------------------------------------------
+def test_search_supplement_injected():
+    """When web_search tool is present, SEARCH_TOOL_SYSTEM_SUPPLEMENT is injected."""
+    from unittest.mock import MagicMock
+
+    fake_tool_ctx = MagicMock()
+    fake_tool_ctx.has_search_tool = True
+    fake_tool_ctx.tools = [{"type": "function", "function": {"name": "web_search"}}]
+    fake_tool_ctx.map_tool_choice.return_value = None
+
+    request = _make_request(input="What is the weather?")
+    result = convert_responses_to_openai_chat(
+        request,
+        tool_ctx=fake_tool_ctx,
+    )
+    first_msg = result["messages"][0]
+    assert first_msg["role"] == "system"
+    assert "call the web search tool" in first_msg["content"]
+
+
+def test_search_supplement_not_injected_without_tool():
+    """When no search tool is present, no extra system supplement is added."""
+    request = _make_request(input="What is 2+2?")
+    result = convert_responses_to_openai_chat(request)
+    if result["messages"] and result["messages"][0]["role"] == "system":
+        assert "call the web search" not in result["messages"][0]["content"]

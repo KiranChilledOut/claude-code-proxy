@@ -13,7 +13,7 @@ from src.codex.models import ResponsesItem, ResponsesRequest, ResponsesResponse,
 from src.codex.request_converter import convert_responses_to_openai_chat
 from src.codex.response_converter import convert_openai_to_responses
 from src.codex.session import SessionStore
-from src.codex.stream_converter import convert_openai_sse_to_responses_sse
+from src.codex.stream_converter import codex_response_to_sse, convert_openai_sse_to_responses_sse
 from src.codex.tools_compat import parse_codex_tools
 from src.api.optimization_handlers import optimized_response_to_sse, try_local_optimization
 from src.conversion.request_converter import (
@@ -227,13 +227,15 @@ async def create_response(
         session_id = request.previous_response_id
 
     try:
+        # DEBUG: log full request payload
+        logger.info(f"Codex request input: {request.input!r}, model={request.model}, stream={request.stream}")
         # Look up session if previous_response_id provided
         session = None
         session_items: list = []
         if request.previous_response_id:
             session = await codex_session_store.get(request.previous_response_id)
             if session:
-                session_items = session.output_items + session.input_items
+                session_items = session.input_items + session.output_items
 
         # Parse tools
         tool_ctx = None
@@ -249,12 +251,95 @@ async def create_response(
         )
         backend_model = openai_request.get("model")
 
+        # Server-side web search: mirror the Claude Code path for Codex.
+        # When a search tool is offered and Tavily is configured, the proxy
+        # executes the search itself in a bounded loop so results are available
+        # to the model (Codex's built-in search can't run against a non-Anthropic
+        # backend). Only engaged when a search tool is present.
+        needs_search = (
+            tool_ctx is not None
+            and getattr(tool_ctx, "has_search_tool", False)
+            and config.tavily_api_key
+            and config.server_search_enabled
+        )
+
+        if needs_search:
+            # The search loop is non-streaming by design (multiple chat.completions
+            # calls are run internally).
+            openai_request["stream"] = False
+            openai_request.pop("stream_options", None)
+            openai_response = await server_tools.run_search_loop(
+                openai_request, openai_client, request_id
+            )
+            codex_response = convert_openai_to_responses(
+                openai_response,
+                request_model=backend_model or request.model,
+                previous_id=session_id,
+                tool_ctx=tool_ctx,
+            )
+
+            # Observability
+            usage_dict = {}
+            if hasattr(codex_response.usage, "model_dump"):
+                usage_dict = codex_response.usage.model_dump()
+            else:
+                usage_dict = {
+                    "input_tokens": codex_response.usage.input_tokens,
+                    "output_tokens": codex_response.usage.output_tokens,
+                    "total_tokens": codex_response.usage.total_tokens,
+                }
+            observability_recorder.record_request(
+                request_id=request_id,
+                session_id=session_id,
+                session_name=None,
+                started_at=started_at,
+                started_at_unix=started_at_unix,
+                completed_at=_utc_now_iso(),
+                base_url=config.openai_base_url,
+                claude_model=request.model,
+                backend_model=backend_model,
+                stream=request.stream,
+                status="success",
+                http_status=200,
+                latency_ms=(time.monotonic() - start_monotonic) * 1000,
+                usage=usage_dict,
+                tool_calls=_extract_tool_calls_from_codex_output(codex_response.output),
+            )
+
+            # Save session (same logic as non-streaming path)
+            if isinstance(request.input, list):
+                input_items = list(request.input)
+            else:
+                input_items = [ResponsesItem(type="text", text=request.input)]
+            await codex_session_store.put(
+                codex_response.id,
+                input_items,
+                codex_response.output,
+                previous_id=session_id,
+            )
+
+            if not request.stream:
+                return codex_response
+
+            # Streaming: synthesise SSE from the complete response
+            async def search_sse_stream():
+                async for event in codex_response_to_sse(
+                    codex_response, request_model=backend_model or request.model
+                ):
+                    yield event
+
+            return StreamingResponse(
+                search_sse_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+
         # Non-streaming
         if not request.stream:
             openai_response = await openai_client.create_chat_completion(openai_request, request_id)
             codex_response = convert_openai_to_responses(
                 openai_response,
-                request_model=request.model,
+                request_model=backend_model or request.model,
                 previous_id=session_id,
                 tool_ctx=tool_ctx,
             )
@@ -307,11 +392,13 @@ async def create_response(
         async def codex_sse_stream():
             stream_status = "success"
             stream_error = None
+            accumulator: Dict[str, Any] = {}
             try:
                 async for event in convert_openai_sse_to_responses_sse(
                     openai_stream,
-                    request_model=request.model,
+                    request_model=backend_model or request.model,
                     tool_ctx=tool_ctx,
+                    accumulator=accumulator,
                 ):
                     yield event
             except Exception as exc:
@@ -336,6 +423,38 @@ async def create_response(
                     error_type=None if stream_status == "success" else type(stream_error).__name__,
                     error_message=stream_error,
                 )
+                # Save session for next turn (same logic as non-streaming)
+                if accumulator.get("response_id"):
+                    if isinstance(request.input, list):
+                        input_items = list(request.input)
+                    else:
+                        input_items = [ResponsesItem(type="text", text=request.input)]
+                    output_items: List[Any] = []
+                    if accumulator.get("text_buf", ""):
+                        output_items.append(
+                            ResponsesItem(
+                                type="message",
+                                role="assistant",
+                                content=accumulator["text_buf"],
+                                status="completed",
+                            )
+                        )
+                    for tc in accumulator.get("tool_calls", []):
+                        output_items.append(
+                            ResponsesItem(
+                                type="function_call",
+                                call_id=tc.get("id", ""),
+                                name=tc.get("name", ""),
+                                arguments=tc.get("arguments", ""),
+                                status="completed",
+                            )
+                        )
+                    await codex_session_store.put(
+                        accumulator["response_id"],
+                        input_items,
+                        output_items,
+                        previous_id=session_id,
+                    )
 
         return StreamingResponse(
             codex_sse_stream(),

@@ -166,6 +166,17 @@ Create or edit `~/.claude/settings.json`:
 
 ---
 
+### Codex Statusline
+
+Codex CLI uses `~/.codex/config.toml`, not `~/.claude/settings.json`. Codex's `tui.status_line` accepts predefined identifiers only (e.g., `model`, `mode`, `project`) and does not support a shell-command statusline like Claude Code.
+
+To see the **real backend model** and **context %**, choose from:
+
+1. **Use the Codex dashboard** — open `http://localhost:8083/dashboard` in a browser for live session info.
+2. **Add context usage to your shell prompt** — see [docs/codex/CODEX_STATUSLINE.md](../codex/CODEX_STATUSLINE.md#3-context-usage-via-shell-prompt-workaround).
+
+---
+
 ## 7. Convenience Shell Shortcuts (optional)
 
 These are what the TUI optionally installs. Add them manually if you want `claude --proxy` and `claudius` aliases.

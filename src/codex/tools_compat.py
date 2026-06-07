@@ -91,6 +91,7 @@ class CodexToolContext:
     function_tools: Dict[str, CodexFunctionToolSpec] = field(default_factory=dict)
     has_custom_tools: bool = False
     has_namespace_tools: bool = False
+    has_search_tool: bool = False
     _tools: List[Dict[str, Any]] = field(default_factory=list, repr=False)
 
     @property
@@ -229,8 +230,50 @@ def parse_codex_tools(raw_tools: List[Any]) -> CodexToolContext:
         strip_builtins = True
 
     for tool in raw_tools:
-        # --- Built-ins (stripped or passthrough) ---
+        # --- Built-ins (stripped or promoted) ---
         if is_codex_builtin_tool(tool):
+            # When Tavily is configured, promote web_search to a function tool
+            # instead of stripping it, so the proxy can execute it server-side.
+            if _config is not None:
+                has_tavily = getattr(_config, "tavily_api_key", "") and getattr(
+                    _config, "server_search_enabled", True
+                )
+            else:
+                has_tavily = False
+            if has_tavily:
+                if isinstance(tool, str):
+                    name = tool
+                else:
+                    name = tool.get("type") or tool.get("name") or ""
+                if name == "web_search":
+                    ctx._tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "description": "Search the web for current information.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string", "description": "The search query."}
+                                },
+                                "required": ["query"],
+                            },
+                        },
+                    })
+                    ctx.function_tools["web_search"] = CodexFunctionToolSpec(
+                        namespace=None,
+                        name="web_search",
+                        description="Search the web for current information.",
+                        parameters={
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "The search query."}
+                            },
+                            "required": ["query"],
+                        },
+                    )
+                    ctx.has_search_tool = True
+                    continue
             if not strip_builtins:
                 ctx._tools.append(tool if isinstance(tool, dict) else {"type": tool})
             continue

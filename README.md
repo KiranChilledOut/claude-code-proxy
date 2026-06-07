@@ -105,6 +105,13 @@ Then open a project directory and run:
 cd /path/to/your/project && codex --full-auto
 ```
 
+**Codex Desktop App (macOS):** The GUI app does not inherit shell exports. Set the key via `launchctl` before launching:
+
+```bash
+launchctl setenv OPENAI_API_KEY "nb-..."
+open -a "Codex"
+```
+
 Codex will use the proxy for all `/v1/responses` calls, with server-side web search (if Tavily is configured) and model routing.
 
 See [docs/codex/CODEX_STATUSLINE.md](docs/codex/CODEX_STATUSLINE.md) for full statusline configuration options.

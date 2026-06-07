@@ -86,7 +86,7 @@ def test_tool_call_response():
     assert item.call_id == "call_1"
     assert item.name == "get_weather"
     assert item.arguments == '{"location": "Paris"}'
-    assert item.status == "in_progress"
+    assert item.status == "completed"
 
 
 # --------------------------------------------------------------------------

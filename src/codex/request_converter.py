@@ -1,9 +1,8 @@
 """Convert Codex Responses API requests to OpenAI Chat Completions format."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.codex.models import ResponsesItem, ResponsesRequest
-
 
 # ---------------------------------------------------------------------------
 # Reasoning effort mapping
@@ -35,25 +34,109 @@ def _map_reasoning_effort(reasoning: Optional[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 # Content helpers
 # ---------------------------------------------------------------------------
+_TEXT_BLOCK_TYPES = {"text", "input_text", "output_text"}
+_IMAGE_BLOCK_TYPES = {"image", "input_image", "image_url"}
+
+
+def _image_url_part(url: str, detail: Optional[str] = None) -> Dict[str, Any]:
+    image_url: Dict[str, Any] = {"url": url}
+    if detail:
+        image_url["detail"] = detail
+    return {"type": "image_url", "image_url": image_url}
+
+
+def _normalize_image_url_payload(
+    payload: Any, detail: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Normalize Responses/OpenAI-ish image URL payloads to Chat Completions shape."""
+    if isinstance(payload, str):
+        if not payload:
+            return None
+        return _image_url_part(payload, detail=detail)
+
+    if isinstance(payload, dict):
+        image_url = dict(payload)
+        if "url" not in image_url:
+            return None
+        if detail and "detail" not in image_url:
+            image_url["detail"] = detail
+        return {"type": "image_url", "image_url": image_url}
+
+    return None
+
+
+def _convert_image_block(block: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    block_type = block.get("type")
+    detail = block.get("detail")
+
+    if block_type in ("input_image", "image_url") or "image_url" in block:
+        return _normalize_image_url_payload(block.get("image_url") or block.get("url"), detail)
+
+    if block_type == "image":
+        source = block.get("source")
+        if isinstance(source, dict):
+            if source.get("type") == "base64" and source.get("media_type") and source.get("data"):
+                return _image_url_part(
+                    f"data:{source['media_type']};base64,{source['data']}",
+                    detail=detail,
+                )
+            if source.get("type") == "url":
+                return _normalize_image_url_payload(source.get("url"), detail)
+        return _normalize_image_url_payload(block.get("url"), detail)
+
+    return None
+
+
+def _convert_content_block(block: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    if isinstance(block, str):
+        return block, None
+
+    if not isinstance(block, dict):
+        return None, None
+
+    block_type = block.get("type")
+    if block_type in _TEXT_BLOCK_TYPES:
+        return block.get("text", ""), None
+
+    if block_type in _IMAGE_BLOCK_TYPES or "image_url" in block:
+        return None, _convert_image_block(block)
+
+    return None, None
+
+
 def _convert_content_blocks(content: Any) -> Union[str, List[Dict[str, Any]]]:
     """Convert ResponsesItem content to OpenAI Chat Completions message content.
 
-    String content is returned as-is.  A list of content blocks is reduced to a
-    plain string (text blocks concatenated; image blocks are skipped).
+    String content is returned as-is. Text-only block lists are reduced to a
+    plain string. When image blocks are present, content is returned in the
+    OpenAI Chat Completions multimodal shape.
     """
     if isinstance(content, str):
         return content
 
+    if isinstance(content, dict):
+        content = [content]
+
     if isinstance(content, list):
         texts: List[str] = []
+        parts: List[Dict[str, Any]] = []
+        has_image = False
         for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text":
-                    texts.append(block.get("text", ""))
-                # Image blocks are skipped for now (OpenAI Chat Completions
-                # supports vision via a different shape, not used here).
-            elif isinstance(block, str):
-                texts.append(block)
+            text, image_part = _convert_content_block(block)
+            if image_part is not None:
+                has_image = True
+                if texts:
+                    parts.append({"type": "text", "text": "".join(texts)})
+                    texts = []
+                parts.append(image_part)
+            elif text is not None:
+                texts.append(text)
+
+        if has_image:
+            if texts:
+                parts.append({"type": "text", "text": "".join(texts)})
+            return parts
+
         return "".join(texts)
 
     return "" if content is None else str(content)
@@ -68,7 +151,9 @@ def _convert_item_to_message(item: ResponsesItem) -> Optional[Dict[str, Any]]:
 
     if item_type == "message":
         role = getattr(item, "role", "")
-        if role not in ("user", "assistant"):
+        if role in ("developer", "system"):
+            role = "system"
+        if role not in ("system", "user", "assistant"):
             # Malformed message — no valid OpenAI role to map to.
             return None
         content = _convert_content_blocks(getattr(item, "content", None))
@@ -97,7 +182,7 @@ def _convert_item_to_message(item: ResponsesItem) -> Optional[Dict[str, Any]]:
         output = getattr(item, "output", None)
         return {
             "role": "tool",
-            "content": output if output is not None else "",
+            "content": _convert_content_blocks(output),
             "tool_call_id": call_id,
         }
 
@@ -140,12 +225,6 @@ def convert_responses_to_openai_chat(
     :param model_manager: ``ModelManager`` instance or ``None`` for fallback mapping.
     :return: Dict suitable for passing to an OpenAI-compatible ``chat.completions.create`` call.
     """
-    # --- Model ---
-    if model_manager is not None:
-        mapped_model = model_manager.map_codex_model(request.model)
-    else:
-        mapped_model = _default_map_codex_model(request.model)
-
     # --- Messages ---
     messages: List[Dict[str, Any]] = []
 
@@ -172,6 +251,22 @@ def convert_responses_to_openai_chat(
             if msg is not None:
                 messages.append(msg)
 
+    # --- Model ---
+    if model_manager is not None:
+        mapped_model = model_manager.map_codex_model(request.model)
+    else:
+        mapped_model = _default_map_codex_model(request.model)
+
+    has_image = bool(
+        model_manager
+        and hasattr(model_manager, "contains_image_content")
+        and model_manager.contains_image_content(messages)
+    )
+    if has_image:
+        vision_model = getattr(getattr(model_manager, "config", None), "vision_model", None)
+        if vision_model:
+            mapped_model = vision_model
+
     # --- Build output dict ---
     result: Dict[str, Any] = {
         "model": mapped_model,
@@ -190,10 +285,6 @@ def convert_responses_to_openai_chat(
         # Simple passthrough — Codex "tools" may already be OpenAI functions,
         # just pass them through when there is no conversion layer.
         result["tools"] = request.tools
-    elif request.tools is not None and tool_ctx is None:
-        # same path, but ensure tool_choice passthrough when no tool_ctx
-        pass
-
     # Tool choice passthrough when tool_ctx is absent
     if tool_ctx is None and request.tool_choice is not None:
         if isinstance(request.tool_choice, str):
@@ -202,6 +293,11 @@ def convert_responses_to_openai_chat(
         else:
             # Object form — passthrough as-is when not handled by tool_ctx
             result["tool_choice"] = request.tool_choice
+
+    # Vision endpoints commonly reject tool use; mirror the Claude image path.
+    if has_image:
+        result.pop("tools", None)
+        result["tool_choice"] = "none"
 
     # --- Generation parameters ---
     if request.max_output_tokens is not None:
@@ -216,6 +312,14 @@ def convert_responses_to_openai_chat(
     # --- Stream options ---
     if request.stream:
         result["stream_options"] = {"include_usage": True}
+
+    # --- Search nudge ---
+    if tool_ctx is not None and getattr(tool_ctx, "has_search_tool", False):
+        from src.conversion.server_tools import SEARCH_TOOL_SYSTEM_SUPPLEMENT
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] += "\n\n" + SEARCH_TOOL_SYSTEM_SUPPLEMENT
+        else:
+            messages.insert(0, {"role": "system", "content": SEARCH_TOOL_SYSTEM_SUPPLEMENT})
 
     # --- Reasoning effort ---
     if request.reasoning is not None:
