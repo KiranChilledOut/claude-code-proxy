@@ -60,19 +60,40 @@ def _build_output_items(
     message: Dict[str, Any], tool_ctx: Any = None
 ) -> List[ResponsesItem]:
     """Build ResponsesItem list from an OpenAI message dict."""
+    from src.codex.stream_converter import _extract_tool_calls_from_text
+
     items: List[ResponsesItem] = []
 
     # Text content
     content = message.get("content")
     if content:
-        items.append(
-            ResponsesItem(
-                type="message",
-                role="assistant",
-                content=content,
-                status="completed",
+        # Defensive: some models embed tool calls in text instead of structured
+        # tool_calls (Codex CLI format). Parse and extract them here.
+        if isinstance(content, str):
+            clean_text, extracted = _extract_tool_calls_from_text(content)
+        else:
+            clean_text, extracted = content, []
+
+        if clean_text.strip():
+            items.append(
+                ResponsesItem(
+                    type="message",
+                    role="assistant",
+                    content=clean_text,
+                    status="completed",
+                )
             )
-        )
+
+        for tc in extracted:
+            items.append(
+                ResponsesItem(
+                    type="function_call",
+                    call_id=tc["id"],
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"],
+                    status="completed",
+                )
+            )
 
     # Tool calls
     tool_calls = message.get("tool_calls")

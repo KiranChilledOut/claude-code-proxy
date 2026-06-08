@@ -275,16 +275,25 @@ def convert_responses_to_openai_chat(
     }
 
     # --- Tools ---
+    # If the tool_ctx parsed an empty list (all tools stripped or none
+    # recognised we must NOT send tools: [] to the backend — it results in
+    # 400 Bad Request from providers that reject empty tool arrays.
     if tool_ctx is not None:
-        # When tool_ctx is present, let it decide what tools/tool_choice look like
-        if hasattr(tool_ctx, "tools") and tool_ctx.tools is not None:
+        # When tool_ctx is present, let it decide what tools/tool_choice look like.
+        # If no tools survive parsing (all stripped / none recognised) we must
+        # drop BOTH tools and tool_choice — "tool_choice=auto" with no tools
+        # triggers a 400 Bad Request from some providers.
+        if hasattr(tool_ctx, "tools") and tool_ctx.tools is not None and tool_ctx.tools:
             result["tools"] = tool_ctx.tools
-        if hasattr(tool_ctx, "map_tool_choice") and request.tool_choice is not None:
-            result["tool_choice"] = tool_ctx.map_tool_choice(request.tool_choice)
+            if hasattr(tool_ctx, "map_tool_choice") and request.tool_choice is not None:
+                result["tool_choice"] = tool_ctx.map_tool_choice(request.tool_choice)
     elif request.tools is not None:
         # Simple passthrough — Codex "tools" may already be OpenAI functions,
         # just pass them through when there is no conversion layer.
-        result["tools"] = request.tools
+        if request.tools:
+            result["tools"] = request.tools
+            if request.tool_choice is not None:
+                result["tool_choice"] = request.tool_choice
     # Tool choice passthrough when tool_ctx is absent
     if tool_ctx is None and request.tool_choice is not None:
         if isinstance(request.tool_choice, str):

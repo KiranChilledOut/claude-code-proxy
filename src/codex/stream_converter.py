@@ -9,7 +9,95 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Codex CLI text-embedded tool call parser (defensive fallback)
+# ---------------------------------------------------------------------------
+# Some Codex models emit tool calls as literal text blocks when they have
+# been trained on the Codex CLI format.  We detect these patterns and
+# convert them into proper function_call events on the fly.
+
+_RE_TOOL_CALL_SECTION = re.compile(
+    r"<\|tool_calls_section_begin\|>"
+    r"(.*?)"
+    r"<\|tool_calls_section_end\|>",
+    re.DOTALL,
+)
+
+_RE_TOOL_CALL = re.compile(
+    r"<\|tool_call_begin\|>\s*"
+    r"(?:functions\.)?(\w+)(?::(\w+))?\s*"
+    r"<\|tool_call_argument_begin\|>\s*"
+    r"(.*?)"
+    r"<\|tool_call_argument_end\|>\s*"
+    r"<\|tool_call_end\|>",
+    re.DOTALL,
+)
+
+# Inline format without markers (single-line or spread across lines):
+#   functions.exec_command:50 {"cmd":"..."}
+_RE_INLINE_TOOL_CALL_SINGLE = re.compile(
+    r"functions\.(\w+):(\w+)\s+(\{.*?\}\n?)$",
+    re.DOTALL,
+)
+# When the JSON is on its own line but preceded by the function sig:
+#   functions.exec_command:50\n{"cmd":"..."}
+_RE_INLINE_TOOL_CALL_MULTILINE = re.compile(
+    r"^\s*functions\.(\w+):(\w+)\s*\n(\{.*?\})\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def _add_tool_call(tool_calls: List[Dict[str, Any]], func_name: str, raw_args: str) -> None:
+    """Helper: validated append a parsed tool call dict."""
+    try:
+        json.loads(raw_args)
+        args = raw_args
+    except (json.JSONDecodeError, ValueError):
+        args = json.dumps({"input": raw_args})
+    tool_calls.append({
+        "index": len(tool_calls),
+        "id": f"tc_{uuid.uuid4().hex[:12]}",
+        "function": {"name": func_name, "arguments": args},
+    })
+
+
+def _extract_tool_calls_from_text(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Scan *text* for embedded Codex CLI tool call blocks.
+
+    Returns ``(clean_text, tool_calls)`` where *clean_text* has the tool call
+    blocks removed and *tool_calls* is a list of dicts shaped like OpenAI
+    function calls: {"index": int, "id": str, "function": {"name": str, "arguments": str}}.
+    """
+    clean_text = text
+    tool_calls: List[Dict[str, Any]] = []
+
+    # --- Marked format: <tool_calls_section_begin> ... <tool_calls_section_end> ---
+    for section_match in _RE_TOOL_CALL_SECTION.finditer(text):
+        section = section_match.group(1)
+        for m in _RE_TOOL_CALL.finditer(section):
+            func_name = m.group(1)
+            raw_args = m.group(3).strip()
+            _add_tool_call(tool_calls, func_name, raw_args)
+        clean_text = clean_text.replace(section_match.group(0), "")
+
+    # --- Inline single-line: functions.exec_command:50 {"cmd": "..."} ---
+    for m in _RE_INLINE_TOOL_CALL_SINGLE.finditer(text):
+        func_name = m.group(1)
+        raw_args = m.group(3).strip()
+        _add_tool_call(tool_calls, func_name, raw_args)
+        clean_text = clean_text.replace(m.group(0), "")
+
+    # --- Inline multiline: functions.exec_command:50\n{"cmd": "..."} ---
+    for m in _RE_INLINE_TOOL_CALL_MULTILINE.finditer(text):
+        func_name = m.group(1)
+        raw_args = m.group(3).strip()
+        _add_tool_call(tool_calls, func_name, raw_args)
+        clean_text = clean_text.replace(m.group(0), "")
+
+    return clean_text, tool_calls
 
 
 # Some backends (e.g. DeepSeek) wrap reasoning content in <thinking> tags.
@@ -165,8 +253,46 @@ async def convert_openai_sse_to_responses_sse(
                             text = ""
                     break
 
-            if text:
-                state.text_buf += text
+            # Defensive: some models embed tool calls in text (Codex CLI format).
+            # Extract them here and emit as proper function_call events.
+            clean_text, extracted_calls = _extract_tool_calls_from_text(text)
+
+            for tc in extracted_calls:
+                idx = tc["index"]
+                func_name = tc["function"]["name"]
+                args = tc["function"]["arguments"]
+                call_id = tc["id"]
+
+                state.func_call_ids[idx] = call_id
+                state.func_names[idx] = _remap_name(func_name)
+                state.func_item_added[idx] = True
+                state.func_args_buf[idx] = args
+
+                state.seq += 1
+                yield _ev(
+                    "response.output_item.added",
+                    seq=state.seq,
+                    response=ev,
+                    output_index=_tool_output_index(idx),
+                    item={
+                        "id": call_id,
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": state.func_names[idx],
+                        "status": "in_progress",
+                    },
+                )
+                state.seq += 1
+                yield _ev(
+                    "response.function_call_arguments.delta",
+                    seq=state.seq,
+                    response=ev,
+                    output_index=_tool_output_index(idx),
+                    delta=args,
+                )
+
+            if clean_text:
+                state.text_buf += clean_text
                 state.seq += 1
                 yield _ev(
                     "response.output_text.delta",
@@ -175,7 +301,7 @@ async def convert_openai_sse_to_responses_sse(
                     item_id=msg_id,
                     output_index=0,
                     content_index=0,
-                    delta=text,
+                    delta=clean_text,
                 )
 
         # --- Tool call deltas ---

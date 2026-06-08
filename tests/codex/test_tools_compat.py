@@ -620,3 +620,31 @@ def test_unknown_tool_type_stripped():
     ctx = parse_codex_tools(raw)
     assert len(ctx.tools) == 1
     assert ctx.tools[0]["type"] == "function"
+
+
+def test_codex_cli_tool_types_converted_to_function():
+    """Codex CLI tool types (text_editor, exec_command, etc.) are converted to
+    function tools instead of being stripped."""
+    raw = [
+        {"type": "text_editor", "name": "text_editor"},
+        {"type": "exec_command", "description": "Run shell commands", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}},
+        {"type": "apply_patch", "name": "apply_patch"},
+    ]
+    ctx = parse_codex_tools(raw)
+    assert len(ctx.tools) == 3
+    names = [t["function"]["name"] for t in ctx.tools]
+    assert "text_editor" in names
+    assert "exec_command" in names
+    assert "apply_patch" in names
+
+
+def test_empty_tools_dropped_from_request():
+    """When all tools are stripped (builtins only, no Tavily), the request must not
+    contain an empty 'tools' array."""
+    with patch("src.codex.tools_compat._config") as mock_config:
+        mock_config.codex_tool_compat = True
+        mock_config.tavily_api_key = ""
+        mock_config.server_search_enabled = True
+        raw = ["web_search", "local_shell"]
+        ctx = parse_codex_tools(raw)
+        assert not ctx.tools

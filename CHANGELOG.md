@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reasoning, and stop-reason changes.
 
 ### Fixed
+- Codex CLI tool calls are no longer stripped as "unknown tool types". The CLI sends tools with type keys like `text_editor`, `exec_command`, `apply_patch`, etc. These are now converted to OpenAI-style function tools instead of being dropped, so the backend model can correctly emit structured tool calls. `parse_codex_tools()` in `src/codex/tools_compat.py` gains a `_KNOWN_CODEX_TOOL_TYPES` set for this.
+- Codex CLI embedded tool call text is now parsed into real `function_call` events. When the model emits tool calls inline within text (Codex CLI format), the proxy extracts them from the content stream via `_extract_tool_calls_from_text()` and emits proper `function_call` events. This happens in the live streaming path (`convert_openai_sse_to_responses_sse`) and the non-streaming response path (`convert_openai_to_responses`).
+- Empty `tools: []` array is now dropped from the upstream request. When all Codex tools are stripped (e.g. all builtins with no Tavily config), the proxy no longer sends `tools: []` to the backend, which caused 400 Bad Request from some providers. `convert_responses_to_openai_chat()` now checks whether `tool_ctx.tools` is truthy before adding it to the dict.
 - Server-search path no longer drops tool calls. The non-streamed loop result
   was being streamed back via a text-only serializer, so on turns that merely
   *offered* `WebSearch` the model's real tool call (Read/Edit/Agent/...) was

@@ -46,8 +46,22 @@ class CodexFunctionToolSpec:
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Codex CLI tool types that are NOT built-ins but should be converted to
+# function tools.  The Codex CLI sends these with type keys like
+# "text_editor", "exec_command", "apply_patch", etc.  The upstream Nebius
+# backend only understands OpenAI-style function tools, so we repackage them.
 # ---------------------------------------------------------------------------
+_KNOWN_CODEX_TOOL_TYPES = {
+    "text_editor",
+    "exec_command",
+    "shell",
+    "bash",
+    "cat_files",
+    "glob_files",
+    "apply_patch",
+    "web_search",
+    "computer_use",
+}
 
 BUILTIN_TOOLS = {"web_search", "local_shell", "computer_use"}
 
@@ -374,8 +388,30 @@ def parse_codex_tools(raw_tools: List[Any]) -> CodexToolContext:
                 )
             continue
 
-            # Unknown tool types (image_generation, etc.) — strip them since Nebius
-        # only supports function tools.
+        # --- Codex CLI tool types (text_editor, exec_command, etc.) ---
+        # These are not built-ins (not in BUILTIN_TOOLS) and the Codex CLI sends
+        # them with their own type key.  Nebius only supports function tools, so
+        # we convert them to equivalent OpenAI-format function tools.
+        if tool_type in _KNOWN_CODEX_TOOL_TYPES:
+            name = tool.get("name") or tool_type
+            desc = tool.get("description", f"Codex tool: {tool_type}")
+            params = tool.get("parameters") or _GENERIC_STRING_PARAMS
+            ctx.function_tools[name] = CodexFunctionToolSpec(
+                namespace=None, name=name, description=desc, parameters=params
+            )
+            ctx._tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": desc,
+                        "parameters": params,
+                    },
+                }
+            )
+            continue
+
+        # --- Unknown tool types (image_generation, etc.) — strip them ---
         if tool_type not in ("function", "namespace", "custom", ""):
             if not strip_builtins:
                 ctx._tools.append(tool)

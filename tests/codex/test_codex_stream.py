@@ -15,6 +15,7 @@ from src.codex.stream_converter import (
     convert_openai_sse_to_responses_sse,
     _env,
     _ev,
+    _extract_tool_calls_from_text,
 )
 
 
@@ -598,3 +599,61 @@ async def test_codex_response_to_sse_with_function_call():
     assert completed["response"]["output"][1]["type"] == "function_call"
     assert completed["response"]["output"][1]["name"] == "web_search"
     assert completed["response"]["output"][1]["status"] == "completed"
+
+
+# --------------------------------------------------------------------------
+# Tool call extraction from text
+# --------------------------------------------------------------------------
+
+def test_extract_marked_tool_call():
+    """Parse a Codex CLI formatted tool call block with markers."""
+    text = """ thinking about this...
+
+\n\nfunctions.exec_command:50 {"cmd": "echo hello"}
+"""
+    clean, calls = _extract_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "exec_command"
+    args = json.loads(calls[0]["function"]["arguments"])
+    assert args["cmd"] == "echo hello"
+
+
+def test_extract_inline_tool_call():
+    """Parse a Codex CLI inline tool call (no section markers)."""
+    text = "Let me run a command.\n\nfunctions.text_editor:5 {\"file\": \"/tmp/test.py\", \"content\": \"print(x)\"}"
+    clean, calls = _extract_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "text_editor"
+    args = json.loads(calls[0]["function"]["arguments"])
+    assert args["file"] == "/tmp/test.py"
+    assert "text_editor" not in clean
+
+
+@pytest.mark.asyncio
+async def test_stream_parses_embedded_tool_calls_from_content():
+    """When the model emits tool calls as text in SSE chunks,
+    they are converted to proper function_call events."""
+    # Simulate the model producing a single SSE chunk with embedded tool call text
+    stream = mock_openai_sse(
+        {
+            "choices": [
+                {
+                    "delta": {"content": "Let me search.\n\nfunctions.exec_command:50 {\"cmd\": \"echo ok\"}"},
+                    "finish_reason": None,
+                }
+            ]
+        },
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+    )
+    events = await _collect(convert_openai_sse_to_responses_sse(stream, "gpt-4"))
+    types = [_parse_event(ev)["type"] for ev in events]
+
+    # Should have both text and function call events
+    assert "response.output_text.delta" in types
+    assert "response.function_call_arguments.delta" in types
+    assert "response.output_item.added" in types
+
+    # Clean text should not contain the raw tool call
+    text_deltas = [_parse_event(ev) for ev in events if _parse_event(ev)["type"] == "response.output_text.delta"]
+    for td in text_deltas:
+        assert "functions.exec_command" not in td["delta"]

@@ -585,3 +585,17 @@ def test_search_supplement_not_injected_without_tool():
     result = convert_responses_to_openai_chat(request)
     if result["messages"] and result["messages"][0]["role"] == "system":
         assert "call the web search" not in result["messages"][0]["content"]
+
+
+def test_empty_tools_dropped():
+    """When tool_ctx returns an empty tools list, it must not appear in the output
+    to avoid 400 from backends that reject empty tool arrays."""
+    from unittest.mock import MagicMock
+
+    fake_tool_ctx = MagicMock()
+    fake_tool_ctx.tools = []
+    fake_tool_ctx.map_tool_choice.return_value = None
+
+    request = _make_request(input="What is 2+2?")
+    result = convert_responses_to_openai_chat(request, tool_ctx=fake_tool_ctx)
+    assert "tools" not in result
