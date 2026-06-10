@@ -989,20 +989,17 @@ async def event_logging_batch(request: Request, _: None = Depends(validate_api_k
 
 @router.get("/v1/models")
 async def list_models(_: None = Depends(validate_api_key)):
-    """List available models mapped to Claude model names.
+    """List available models — Claude aliases + upstream-discovered models.
 
-        Returns a response shaped like the Anthropic models listing so that
-        Claude Code and other SDK clients can validate connectivity.
-    `
-        Model IDs are dynamically generated to support all current and future
-        Claude models. Routing is handled by pattern matching in ModelManager.
+    Returns an Anthropic-compatible models listing that also includes
+    every model available on the upstream provider (e.g. Nebius) at
+    query time. This lets clients discover both proxied aliases and raw
+    backend models for explicit routing.
     """
-    now = datetime.now().isoformat()
     model_entries = []
     seen = set()
 
     # Define model tiers with their backend mappings and multiple ID variants
-    # Format: (tier_name, backend_model, model_id_and_display_variants)
     # The tier_name maps to the pattern in ModelManager (haiku->small, sonnet->middle, opus->big)
     model_tiers = [
         {
@@ -1044,6 +1041,7 @@ async def list_models(_: None = Depends(validate_api_key)):
     ]
 
     for tier_config in model_tiers:
+        backend = tier_config["backend"]
         for claude_id, display_name in tier_config["variants"]:
             if claude_id not in seen:
                 seen.add(claude_id)
@@ -1053,8 +1051,8 @@ async def list_models(_: None = Depends(validate_api_key)):
                         "object": "model",
                         "created": 1700000000,
                         "owned_by": "anthropic-proxy",
-                        "display_name": display_name,
-                        "backend_model": tier_config["backend"],
+                        "display_name": f"{display_name.replace(' (proxied)', '')} → {backend}",
+                        "backend_model": backend,
                     }
                 )
 
@@ -1075,10 +1073,27 @@ async def list_models(_: None = Depends(validate_api_key)):
                         "object": "model",
                         "created": 1700000000,
                         "owned_by": "anthropic-proxy",
-                        "display_name": f"Custom {model_type} (proxied)",
+                        "display_name": f"Custom {model_type} → {model_id}",
                         "backend_model": model_id,
                     }
                 )
+
+    # Fetch upstream models dynamically and append any not already listed
+    upstream_models = openai_client.list_models()
+    for m in upstream_models:
+        model_id = m.get("id")
+        if model_id and model_id not in seen:
+            seen.add(model_id)
+            model_entries.append(
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "created": m.get("created") or 1700000000,
+                    "owned_by": m.get("owned_by") or "upstream",
+                    "display_name": m.get("id"),
+                    "backend_model": model_id,
+                }
+            )
 
     return {
         "object": "list",

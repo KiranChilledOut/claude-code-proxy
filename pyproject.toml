@@ -52,8 +52,8 @@ Issues = "https://github.com/KiranChilledOut/claude-code-proxy/issues"
 [project.scripts]
 claude-code-proxy-nebius = "src.main:main"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "black>=23.0.0",

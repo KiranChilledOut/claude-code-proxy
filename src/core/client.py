@@ -359,6 +359,32 @@ class OpenAIClient:
         if body:
             logger.error("OpenAI API error body parsed: %s", body)
 
+    def list_models(self) -> list[dict]:
+        """Fetch available models from the upstream provider's /v1/models endpoint.
+
+        Uses raw urllib (not the OpenAI SDK) to mirror how the TUI discovers models,
+        sending a simple GET to BASE_URL + /models with Authorization: Bearer <key>.
+        """
+        import ssl
+        import urllib.error
+        import urllib.request
+
+        endpoint = self.base_url.rstrip("/") + "/models"
+        req = urllib.request.Request(
+            endpoint, headers={"Authorization": f"Bearer {self.api_key}"}
+        )
+        ctx = ssl.create_default_context()
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                data = json.load(resp)
+                return [{"id": m["id"]} for m in data.get("data", []) if m.get("id")]
+        except urllib.error.HTTPError as e:
+            logger.warning("Upstream /models returned HTTP %d: %s", e.code, e.read().decode()[:200])
+            return []
+        except Exception as e:
+            logger.warning("Upstream /models request failed: %s", e)
+            return []
+
     def cancel_request(self, request_id: str) -> bool:
         """Cancel an active request by request_id."""
         if request_id in self.active_requests:

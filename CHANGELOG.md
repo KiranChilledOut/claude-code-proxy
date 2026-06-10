@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `UvicornAccessFilter` logging module that suppresses noisy 200 OK access logs for dashboard observability endpoints. At `WARNING` level all successful requests are hidden; at `INFO` level only dashboard polls are filtered, keeping errors visible. `src/core/logging.py`.
+- `/v1/models` now dynamically fetches upstream provider models and appends them to the response. `OpenAIClient.list_models()` calls the backend `/v1/models`, and the endpoint merges discovered models alongside the existing Claude aliases and custom env mappings.
 - Codex server-side web search (Tavily). When `TAVILY_API_KEY` is set, `web_search` built-in tools from Codex CLI are promoted to OpenAI function tools, the proxy injects `SEARCH_TOOL_SYSTEM_SUPPLEMENT` into the system prompt, and `run_search_loop()` executes the search server-side (same pattern as the Claude Code path). A new `codex_response_to_sse()` generator converts the final non-streaming response into synthetic SSE events for streaming clients. Files: `src/codex/tools_compat.py`, `src/codex/request_converter.py`, `src/codex/stream_converter.py`, `src/api/endpoints.py`.
 - `docs/codex/CODEX_STATUSLINE.md` — documentation for Codex CLI proxy routing (`openai_base_url`, `model_provider`) and statusline configuration (TOML `tui.status_line`), plus a shell-prompt workaround for live context-usage display.
 - Codex proxy tool compatibility (Unit 2): `CodexToolContext` and `tools_compat.py` with parsing, conversion, and remapping for string tools, custom tools (multi-suffix proxy functions), namespace tools (flatten/unflatten), built-in tools (`web_search`/`local_shell`/`computer_use`), and standard function passthrough.
@@ -94,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dead code branch removed from Codex request converter.
 
 ### Changed
+- `.env.example` default `LOG_LEVEL` changed from `INFO` to `WARNING` with expanded documentation describing the four modes (`DEBUG` / `INFO` / `WARNING` / `ERROR`).
+- Replaced deprecated `[tool.uv.dev-dependencies]` in `pyproject.toml` with the standard `[dependency-groups.dev]` section. Eliminates the UV deprecation warning during package builds.
 - Added `refusal`, `pause_turn`, and `model_context_window_exceeded` stop-reason
   constants (only `refusal` is emitted today; the others are reserved for
   server-tool / upstream-error wiring).
