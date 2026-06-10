@@ -1,4 +1,11 @@
-# Claude Code Proxy for Nebius
+# [MOVED] Claude Code Proxy for Nebius
+
+> **This repository is archived.** Active development has moved to the new unified repo.
+> **New home:** https://github.com/KiranChilledOut/claude-codex-nebius-proxy
+>
+> Please clone and file issues / PRs there.
+
+---
 
 A Claude Code → Nebius bridge. Accepts Claude-Code requests, converts to OpenAI-compatible requests, and converts responses back.
 
